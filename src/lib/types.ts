@@ -29,6 +29,12 @@ export interface Event {
   resolvedOutcomeId?: string
   outcomes: Outcome[]
   resolutionSource: string
+  consensus?: number
+  spread?: number
+  totalVolume?: number
+  totalOI?: number
+  isWatchlisted?: boolean
+  quotes?: VenueQuote[]
 }
 
 export interface VenueQuote {
@@ -37,8 +43,8 @@ export interface VenueQuote {
   outcomeId: string
   bestBid: number
   bestAsk: number
-  lastPrice: number // 0-1
-  change24h: number // in percentage points, e.g. +4.1 or -2.3
+  lastPrice: number
+  change24h: number
   volume24h: number
   totalVolume: number
   openInterest: number
@@ -64,12 +70,6 @@ export interface OrderBook {
   midPrice: number
 }
 
-export interface PricePoint {
-  t: string // ISO
-  venueId: string
-  price: number
-}
-
 export interface Trade {
   id: string
   eventId: string
@@ -84,6 +84,17 @@ export interface Trade {
   t: string
 }
 
+export interface WalletPosition {
+  eventId: string
+  eventTitle: string
+  venueId: string
+  outcomeId: string
+  shares: number
+  avgPrice: number
+  currentPrice: number
+  pnl: number
+}
+
 export interface WalletProfile {
   address: string
   chain: string
@@ -95,29 +106,20 @@ export interface WalletProfile {
   unrealizedPnl: number
   winRate: number
   marketsTraded: number
-  credibilityScore: number // 0-100
+  credibilityScore: number
   brierScore: number
   categoryAccuracy: Record<Category, number>
   venues: string[]
   pnlHistory: { t: string; pnl: number }[]
-}
-
-export interface Position {
-  wallet: string
-  eventId: string
-  venueId: string
-  outcomeId: string
-  shares: number
-  avgPrice: number
-  currentPrice: number
-  pnl: number
+  positions: WalletPosition[]
+  isFollowed?: boolean
 }
 
 export interface Pick {
   id: string
   eventId: string
   outcomeId: string
-  probability: number // 0-1
+  probability: number
   consensusAtPick: number
   stake?: number
   reasoning: string
@@ -156,18 +158,12 @@ export interface AlertRule {
   enabled: boolean
 }
 
-export interface ExecutionResult {
-  id: string
-  venueId: string
-  chain: 'sui'
-  eventId: string
-  outcomeId: string
-  side: 'buy' | 'sell'
-  amount: number
-  price: number
-  shares: number
-  fee: number
-  status: 'pending' | 'confirmed' | 'failed'
-  txDigest: string
-  createdAt: string
+export interface DivergenceItem {
+  event: Event
+  outcome: Outcome
+  consensus: number
+  minQuote: VenueQuote
+  maxQuote: VenueQuote
+  spreadPp: number
+  arbitrageEdge: number
 }

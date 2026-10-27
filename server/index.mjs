@@ -13,7 +13,13 @@ import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import tatumRoutes from './routes/tatum.mjs'
-import apiRoutes from './routes/api.mjs'
+import marketsRoutes from './routes/markets.mjs'
+import walletsRoutes from './routes/wallets.mjs'
+import memoryRoutes from './routes/memory.mjs'
+import alertsRoutes from './routes/alerts.mjs'
+import tradeRoutes from './routes/trade.mjs'
+import agentRoutes from './routes/agent.mjs'
+import generalRoutes from './routes/general.mjs'
 import { credentialGuard } from './credential-guard.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -32,7 +38,13 @@ app.use(express.json())
 app.use(credentialGuard)
 
 app.use('/api/tatum', tatumRoutes)
-app.use('/api', apiRoutes)
+app.use('/api/markets', marketsRoutes)
+app.use('/api/wallets', walletsRoutes)
+app.use('/api/memory', memoryRoutes)
+app.use('/api/alerts', alertsRoutes)
+app.use('/api/trade', tradeRoutes)
+app.use('/api/agent', agentRoutes)
+app.use('/api', generalRoutes)
 
 const server = createHttpServer(app)
 
