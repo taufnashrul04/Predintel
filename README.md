@@ -101,6 +101,16 @@ TATUM_API_KEY=your_key
 
 ---
 
+## Paper Journal
+
+- **Sign in with Sui** (`/api/paper/auth/challenge` → wallet `signPersonalMessage` → `/api/paper/auth/verify`): the server verifies the signature and issues an HMAC session token (24h). Set `PAPER_SESSION_SECRET` to keep sessions valid across restarts.
+- **Paper fills** (`POST /api/paper/fill`, session required): priced by the server exactly like a real buy — live ask on WaterX / DeepBook Predict, book walk on demo markets.
+- **Marks** (`POST /api/paper/marks`): live bid for open positions; DeepBook Predict windows settle to $1 / $0 from on-chain `MarketSettled` events.
+- Entry points: Trade tab **Paper (journal)** mode, Dashboard **Paper buy** buttons, and **Copy** signals from tracked wallets' real DeepBook Predict fills (same window and direction, at the reference strike).
+- The journal (trades, tracked wallets, copy size) is stored in the browser per signed-in wallet; the server keeps no journal state.
+
+---
+
 ## Wallets & Live Data
 
 - **All forecasters / Following / My wallets** tabs on `/wallets`. My wallets are Sui addresses saved in the browser (localStorage), added by address or from a connected wallet.

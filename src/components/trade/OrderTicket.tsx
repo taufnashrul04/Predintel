@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Zap, PenLine, AlertCircle, Wallet } from 'lucide-react'
-import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-kit-react'
-import { ConnectButton } from '@mysten/dapp-kit-react/ui'
+import { Zap, PenLine, AlertCircle } from 'lucide-react'
 import { Panel } from '../SharedUI'
 import { useApp } from '../../context/AppContext'
-import { USDC_COIN_TYPE } from '../../lib/dappKit'
+import PaperSignIn from '../journal/PaperSignIn'
+import { useJournal, usePaperSession } from '../../lib/paperJournal'
 import {
   AgentWallet,
   ExecutionStatus,
@@ -34,29 +33,6 @@ const segment = (active: boolean) =>
     active ? 'bg-brand-solid text-primary-on-brand shadow-xs' : 'text-quaternary hover:text-primary'
   }`
 
-function useWalletBalances(address: string | undefined) {
-  const client = useCurrentClient()
-  const [balances, setBalances] = useState<{ sui: number; usdc: number } | null>(null)
-
-  useEffect(() => {
-    if (!address) return setBalances(null)
-    let cancelled = false
-    Promise.all([
-      client.getBalance({ owner: address }),
-      client.getBalance({ owner: address, coinType: USDC_COIN_TYPE })
-    ])
-      .then(([sui, usdc]) => {
-        if (!cancelled) setBalances({ sui: Number(sui.balance.balance) / 1e9, usdc: Number(usdc.balance.balance) / 1e6 })
-      })
-      .catch(() => !cancelled && setBalances(null))
-    return () => {
-      cancelled = true
-    }
-  }, [address, client])
-
-  return balances
-}
-
 function PreviewRow({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'good' | 'bad' }) {
   const color = tone === 'good' ? 'text-utility-success-700' : tone === 'bad' ? 'text-utility-error-700' : 'text-primary'
   return (
@@ -69,9 +45,9 @@ function PreviewRow({ label, value, tone }: { label: string; value: React.ReactN
 
 export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, setTicket, agentWallet, onExecuted, live, priceVersion }: Props) {
   const { showToast } = useApp()
-  const dAppKit = useDAppKit()
-  const account = useCurrentAccount()
-  const balances = useWalletBalances(account?.address)
+  const { session } = usePaperSession()
+  const { paperBuy } = useJournal(session?.address)
+  const isPaper = ticket.mode === 'direct'
 
   const [quote, setQuote] = useState<TradeQuote | null>(null)
   const [quoteError, setQuoteError] = useState<string | null>(null)
@@ -110,6 +86,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
       setQuoteLoading(true)
       apiJson<TradeQuote>(`/api/trade/quote?${params}`, { signal: controller.signal })
         .then(q => {
+          if (!Array.isArray(q?.legs) || !Array.isArray(q?.routes)) throw new Error('Unexpected quote response. Try again.')
           setQuote(q)
           setQuoteError(null)
         })
@@ -126,7 +103,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     }
   }, [market.id, outcomeId, ticket.side, ticket.type, ticket.amount, ticket.limitPrice, ticket.split, ticket.mode, priceVersion])
 
-  const legsLabel = quote?.legs.map(l => l.venueName).join(' + ') || quote?.bestExecutableRoute?.venueName || ''
+  const legsLabel = quote?.legs?.map(l => l.venueName).join(' + ') || quote?.bestExecutableRoute?.venueName || ''
 
   const agentLimits = agentWallet && {
     dailyLeft: Math.max(0, agentWallet.rules.dailyBudget - agentWallet.spentToday),
@@ -146,7 +123,6 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
   const maxAmount = (() => {
     if (ticket.side === 'sell' && quote?.heldShares) return Math.floor(quote.heldShares * (quote.bestRoute.topPrice ?? quote.avgFillPrice))
     if (ticket.mode === 'agent' && agentLimits) return Math.floor(Math.min(agentLimits.balance, agentLimits.maxPerTrade, agentLimits.dailyLeft))
-    if (balances) return Math.floor(balances.usdc)
     return null
   })()
 
@@ -190,22 +166,11 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
         return
       }
 
-      if (!account) throw new Error('Connect a Sui wallet first.')
-      setExecution({ ...base, status: 'building' })
-      const intent = await postJson<{ intentId: string; message: string }>('/api/trade/build', {
-        ...order,
-        address: account.address
-      })
-      setExecution({ ...base, status: 'signing' })
-      const signed = await dAppKit.signPersonalMessage({ message: new TextEncoder().encode(intent.message) })
+      if (!session) throw new Error('Sign in with your Sui wallet to place paper orders.')
       setExecution({ ...base, status: 'pending' })
-      const result = await postJson<{ ref: string; simulated: boolean }>('/api/trade/submit', {
-        intentId: intent.intentId,
-        signature: signed.signature
-      })
-      setExecution({ ...base, status: 'confirmed', ref: result.ref, simulated: result.simulated })
-      showToast('Signed order filled (simulated)')
-      onExecuted()
+      const trade = await paperBuy({ market: market.id, outcome: outcomeId, amount: order.amount }, { kind: 'trade' })
+      setExecution({ ...base, venues: legsLabel, shares: trade.shares, status: 'confirmed', ref: trade.id, simulated: true })
+      showToast(`Paper ${trade.outcomeLabel}: ${trade.shares} sh @ ${(trade.entryPrice * 100).toFixed(1)}¢ added to your journal`)
     } catch (err: any) {
       const reason = /reject|denied|cancel/i.test(err?.message ?? '') ? 'You declined the signature in your wallet.' : err?.message
       setExecution({ ...base, status: 'failed', reason })
@@ -213,15 +178,22 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     }
   }
 
-  const directNeedsWallet = ticket.mode === 'direct' && !account
-  const canSubmit = Boolean(quote?.executable) && !quoteLoading && !busy && !agentWarning
+  const paperNeedsSignIn = isPaper && !session
+  const paperWarning = !isPaper
+    ? null
+    : ticket.side === 'sell'
+    ? 'Close paper positions from the Journal; paper orders here are buys.'
+    : ticket.type === 'limit'
+    ? 'Paper orders fill at the live price. Switch to Market.'
+    : null
+  const canSubmit = Boolean(quote?.executable) && !quoteLoading && !busy && !agentWarning && !paperWarning
 
   return (
-    <Panel title="Order ticket" badge={ticket.mode === 'agent' ? 'AGENT · SUI' : 'DIRECT · WALLET'} badgeVariant="brand">
+    <Panel title="Order ticket" badge={ticket.mode === 'agent' ? 'AGENT · SUI' : 'PAPER · JOURNAL'} badgeVariant="brand">
       <div className="space-y-sm text-xs font-mono">
         <div className="grid grid-cols-2 gap-xs bg-secondary p-xxs rounded-lg border border-secondary" role="tablist" aria-label="Execution mode">
           <button role="tab" aria-selected={ticket.mode === 'direct'} onClick={() => update({ mode: 'direct' })} className={segment(ticket.mode === 'direct')}>
-            Direct (your wallet)
+            Paper (journal)
           </button>
           <button role="tab" aria-selected={ticket.mode === 'agent'} onClick={() => update({ mode: 'agent' })} className={segment(ticket.mode === 'agent')}>
             Agent (x402 · Sui)
@@ -229,21 +201,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
         </div>
 
         {ticket.mode === 'direct' ? (
-          <div className="flex items-center justify-between gap-sm p-xs bg-secondary rounded border border-secondary">
-            {account ? (
-              <>
-                <span className="inline-flex items-center gap-xs text-primary">
-                  <Wallet className="size-3.5" /> {shortAddr(account.address)}
-                </span>
-                <span className="text-quaternary">
-                  {balances ? `${balances.sui.toFixed(2)} SUI · ${usd(balances.usdc)}` : 'Loading balance…'}
-                </span>
-              </>
-            ) : (
-              <span className="text-quaternary">Connect a Sui wallet to sign orders.</span>
-            )}
-            <ConnectButton />
-          </div>
+          <PaperSignIn compact />
         ) : (
           agentLimits && (
             <div className="p-xs bg-secondary rounded border border-secondary text-quaternary">
@@ -405,17 +363,15 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
           </div>
         )}
 
-        {(quoteError || quote?.notExecutableReason || agentWarning) && (
+        {(quoteError || quote?.notExecutableReason || agentWarning || paperWarning) && (
           <div className="flex gap-xs p-xs bg-utility-warning-50 border border-utility-warning-200 text-utility-warning-700 rounded font-sans">
             <AlertCircle className="size-4 shrink-0" />
-            <span>{quoteError || agentWarning || quote?.notExecutableReason}</span>
+            <span>{paperWarning || quoteError || agentWarning || quote?.notExecutableReason}</span>
           </div>
         )}
 
-        {directNeedsWallet ? (
-          <div className="flex justify-center">
-            <ConnectButton />
-          </div>
+        {paperNeedsSignIn ? (
+          <p className="text-center text-tertiary font-sans">Sign in above to place paper orders.</p>
         ) : (
           <button
             onClick={() => setConfirmOpen(true)}
@@ -429,14 +385,14 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
                 : 'Submitting…'
               : ticket.mode === 'agent'
               ? 'Review agent order'
-              : 'Review and sign'}
+              : 'Review paper order'}
           </button>
         )}
 
         {execution && (
           <div className="p-xs bg-primary border border-secondary rounded-lg space-y-xxs" aria-live="polite">
             <div className="flex items-center justify-between">
-              <span className="text-quaternary">{execution.mode === 'agent' ? 'Agent order' : 'Signed order'} · {execution.venues}</span>
+              <span className="text-quaternary">{execution.mode === 'agent' ? 'Agent order' : 'Paper order'} · {execution.venues}</span>
               <span
                 className={`font-bold uppercase ${
                   execution.status === 'confirmed'
@@ -452,7 +408,9 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
             {execution.reason && <p className="text-utility-error-700 font-sans">{execution.reason}</p>}
             {execution.status === 'confirmed' && (
               <p className="text-[11px] text-quaternary font-sans">
-                {execution.simulated
+                {execution.mode === 'direct'
+                  ? 'Added to your paper journal at the live price.'
+                  : execution.simulated
                   ? `Simulated fill (ref ${execution.ref}). On-chain settlement on ${execution.venues} isn't wired yet.`
                   : `Tx ${execution.txDigest}`}
               </p>
@@ -476,10 +434,10 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
                 <PreviewRow label="Fills on" value={legsLabel || '—'} />
                 <PreviewRow label="Avg price · shares" value={`${cents(quote.avgFillPrice)} · ${quote.totalShares}`} />
                 <PreviewRow label="Fees" value={usd(quote.totalFees)} />
-                <PreviewRow label="Mode" value={ticket.mode === 'agent' ? 'Agent vault (x402 · Sui)' : `Your wallet ${account ? shortAddr(account.address) : ''}`} />
+                <PreviewRow label="Mode" value={ticket.mode === 'agent' ? 'Agent vault (x402 · Sui)' : `Paper journal ${session ? shortAddr(session.address) : ''}`} />
               </div>
               {ticket.mode === 'direct' && (
-                <p className="mt-sm text-tertiary font-sans">Your wallet will ask you to sign this exact order. Signing doesn't move funds.</p>
+                <p className="mt-sm text-tertiary font-sans">Paper trade at the live price. No funds move; it is recorded in your journal.</p>
               )}
             </div>
             <footer className="flex justify-end gap-sm border-t border-secondary p-xl">
@@ -487,7 +445,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
                 Cancel
               </button>
               <button onClick={execute} className="rounded-lg bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand hover:bg-brand-solid-hover">
-                {ticket.mode === 'agent' ? 'Execute via agent' : 'Sign order'}
+                {ticket.mode === 'agent' ? 'Execute via agent' : 'Place paper order'}
               </button>
             </footer>
           </div>

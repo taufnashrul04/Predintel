@@ -1,164 +1,338 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip
-} from 'recharts'
-import { Panel, StatCard } from '../components/SharedUI'
+import { Trash2, Plus, ExternalLink } from 'lucide-react'
+import { Panel, StatCard, VenuePill } from '../components/SharedUI'
+import SuiWalletScope from '../components/SuiWalletScope'
+import PaperSignIn from '../components/journal/PaperSignIn'
+import CopySignals from '../components/journal/CopySignals'
+import { VENUE_MAP } from '../lib/config/venues'
+import { formatTimeAgo } from '../lib/formatters'
+import { parseSuiAddress } from '../lib/myWallets'
+import { PaperTrade, usePaperMarks, usePaperSession, useJournal } from '../lib/paperJournal'
+import { useApp } from '../context/AppContext'
 
-export default function PickJournalPage() {
-  const [picks, setPicks] = useState<any[]>([])
-  const [tradesHistory, setTradesHistory] = useState<any[]>([])
+const th = 'py-xs px-sm'
+const td = 'py-sm px-sm'
+const cents = (p: number | null | undefined) => (p == null ? '—' : `${(p * 100).toFixed(1)}¢`)
+const usd = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const pnlTone = (n: number) => (n > 0 ? 'text-utility-success-700' : n < 0 ? 'text-utility-error-700' : 'text-primary')
+const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+
+function sourceLabel(t: PaperTrade, labels: Map<string, string>) {
+  if (t.source.kind === 'copy') return `Copy · ${labels.get(t.source.wallet.toLowerCase()) ?? short(t.source.wallet)}`
+  if (t.source.kind === 'dashboard') return `Dashboard · ${t.source.label}`
+  return 'Trade tab'
+}
+
+function Venue({ id }: { id: string }) {
+  const v = VENUE_MAP.get(id)
+  return <VenuePill name={v?.name ?? id} color={v?.color ?? '#888'} />
+}
+
+function JournalWorkspace() {
   const navigate = useNavigate()
+  const { showToast } = useApp()
+  const { session } = usePaperSession()
+  const address = session?.address
+  const { journal, closeTrade, applySettlements, removeTrade, track, untrack, setCopySize } = useJournal(address)
+  const marks = usePaperMarks(address, journal.trades, applySettlements)
+  const [walletInput, setWalletInput] = useState('')
+  const [labelInput, setLabelInput] = useState('')
+  const [trackError, setTrackError] = useState<string | null>(null)
+  const [closing, setClosing] = useState<string | null>(null)
 
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/picks').then(r => r.json()),
-      fetch('/api/trade/history').then(r => r.json())
-    ]).then(([p, t]) => {
-      setPicks(Array.isArray(p) ? p : [])
-      setTradesHistory(Array.isArray(t) ? t : [])
-    }).catch(console.error)
-  }, [])
+  const open = journal.trades.filter(t => t.status === 'open')
+  const done = journal.trades.filter(t => t.status !== 'open')
+  const unrealized = open.reduce((s, t) => {
+    const m = marks[t.id]?.mark
+    return m == null ? s : s + (m * t.shares - t.cost)
+  }, 0)
+  const realized = done.reduce((s, t) => s + (t.realizedPnl ?? 0), 0)
+  const wins = done.filter(t => (t.realizedPnl ?? 0) > 0).length
+  const labels = new Map(journal.tracked.map(w => [w.address.toLowerCase(), w.label]))
 
-  const calibrationData = [
-    { bin: '10%', predicted: 10, actual: 12 },
-    { bin: '20%', predicted: 20, actual: 18 },
-    { bin: '30%', predicted: 30, actual: 29 },
-    { bin: '40%', predicted: 40, actual: 44 },
-    { bin: '50%', predicted: 50, actual: 51 },
-    { bin: '60%', predicted: 60, actual: 63 },
-    { bin: '70%', predicted: 70, actual: 68 },
-    { bin: '80%', predicted: 80, actual: 76 },
-    { bin: '90%', predicted: 90, actual: 92 }
-  ]
+  const settled = done.filter(t => t.status === 'settled')
+  const buckets = [0, 0.2, 0.4, 0.6, 0.8].map(lo => {
+    const inBucket = settled.filter(t => t.entryPrice >= lo && t.entryPrice < lo + 0.2)
+    const won = inBucket.filter(t => t.exitPrice === 1).length
+    return { lo, n: inBucket.length, hit: inBucket.length ? won / inBucket.length : null }
+  })
+
+  const marketLink = (t: PaperTrade) =>
+    navigate(t.live ? `/trade?market=${encodeURIComponent(t.market)}&outcome=${t.outcomeId}` : `/trade?market=${t.market}&outcome=${t.outcomeId}`)
+
+  const close = async (t: PaperTrade) => {
+    setClosing(t.id)
+    try {
+      await closeTrade(t.id)
+      showToast('Paper position closed at the live bid')
+    } catch (err: any) {
+      showToast(err.message)
+    } finally {
+      setClosing(null)
+    }
+  }
+
+  const addTracked = (e: React.FormEvent) => {
+    e.preventDefault()
+    const wallet = parseSuiAddress(walletInput)
+    if (!wallet) return setTrackError('Enter a valid Sui address.')
+    if (journal.tracked.some(w => w.address === wallet)) return setTrackError('Already tracked.')
+    track(wallet, labelInput)
+    setWalletInput('')
+    setLabelInput('')
+    setTrackError(null)
+    showToast('Wallet tracked for copy signals')
+  }
 
   return (
     <div className="space-y-md">
-      {/* Stats Summary with Trades Count */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-sm">
-        <StatCard label="Total Picks Logged" value={picks.length} subtext="Tracked on Walrus" />
-        <StatCard label="Win Rate" value="68.4%" change="+4.1%" changePositive={true} />
-        <StatCard label="Brier Calibration" value="0.094" subtext="Lower is superior" />
-        <StatCard label="Avg Edge vs Market" value="+6.2pp" subtext="Consensus divergence" />
-        <StatCard label="Trades Executed" value={tradesHistory.length} subtext="Live Terminal Fills" />
-      </div>
-
-      {/* Forecaster Calibration Diagram */}
-      <Panel title="Forecaster Calibration Curve (Reliability Diagram)" badge="DIAGNOSTIC">
-        <div className="h-60 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={calibrationData}>
-              <XAxis dataKey="bin" stroke="#5C6773" fontSize={10} />
-              <YAxis stroke="#5C6773" fontSize={10} unit="%" />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#0D1117', borderColor: '#1F2933', fontSize: '11px' }}
-              />
-              <Line
-                type="linear"
-                dataKey="predicted"
-                stroke="#5C6773"
-                strokeDasharray="4 4"
-                name="Perfect Calibration"
-              />
-              <Line
-                type="monotone"
-                dataKey="actual"
-                stroke="#22D3EE"
-                strokeWidth={2}
-                name="Actual Hit Rate"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+      <Panel title="Paper journal" badge="PAPER · NO REAL FUNDS" badgeVariant="warning">
+        <div className="space-y-sm">
+          <PaperSignIn />
+          <p className="text-xs text-tertiary">
+            Every paper trade is priced at the live venue price when you place it, then marked live. DeepBook Predict windows settle on-chain
+            within minutes, so their results are real. Your journal is saved in this browser for the signed-in wallet.
+          </p>
         </div>
       </Panel>
 
-      {/* Scorecards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-        <div className="bg-primary border border-secondary rounded-xl p-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs mb-xxs">
-            <span className="text-utility-success-700 font-bold">WON (+18 Credibility)</span>
-            <span className="text-quaternary font-mono">Resolved 10/15</span>
+      {!address ? null : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-sm">
+            <StatCard label="Open positions" value={open.length} subtext={`${usd(open.reduce((s, t) => s + t.cost, 0))} at cost`} />
+            <StatCard label="Unrealized PnL" value={usd(unrealized)} changePositive={unrealized >= 0} subtext="at live bid" />
+            <StatCard label="Realized PnL" value={usd(realized)} changePositive={realized >= 0} subtext={`${done.length} closed`} />
+            <StatCard label="Win rate" value={done.length ? `${Math.round((wins / done.length) * 100)}%` : '—'} subtext={`${wins} of ${done.length}`} />
+            <StatCard label="Tracked wallets" value={journal.tracked.length} subtext="copy signals" />
           </div>
-          <div className="text-xs font-semibold text-primary">EU AI Act upheld by European Court of Justice?</div>
-          <p className="text-[11px] text-tertiary mt-xs">
-            You predicted: <strong className="text-primary font-mono">85%</strong> · Market consensus at pick:{' '}
-            <strong className="text-quaternary font-mono">75%</strong> · Final Outcome:{' '}
-            <strong className="text-utility-success-700 font-mono">YES (100%)</strong>
-          </p>
-        </div>
 
-        <div className="bg-primary border border-secondary rounded-xl p-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs mb-xxs">
-            <span className="text-utility-error-700 font-bold">LOST (-8 Credibility)</span>
-            <span className="text-quaternary font-mono">Resolved 10/24</span>
+          <Panel title="Open paper positions" badge={`${open.length}`} noPadding>
+            <div className="overflow-x-auto">
+              {open.length === 0 ? (
+                <p className="p-xl text-center text-xs text-tertiary">
+                  No open positions. Place a paper order on the{' '}
+                  <button onClick={() => navigate('/trade')} className="text-brand-primary hover:underline">
+                    Trade tab
+                  </button>
+                  , from a Dashboard suggestion, or copy a tracked wallet below.
+                </p>
+              ) : (
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
+                      <th className={th}>Market</th>
+                      <th className={th}>Outcome</th>
+                      <th className={th}>Venue</th>
+                      <th className={th}>Source</th>
+                      <th className={th}>Entry</th>
+                      <th className={th}>Mark</th>
+                      <th className={th}>Shares</th>
+                      <th className={th}>Unrealized</th>
+                      <th className={`${th} text-right`}>Close</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-secondary">
+                    {open.map(t => {
+                      const m = marks[t.id]
+                      const pnl = m?.mark != null ? m.mark * t.shares - t.cost : null
+                      return (
+                        <tr key={t.id} className="hover:bg-secondary-hover">
+                          <td className={`${td} font-sans font-medium text-primary`}>
+                            <button onClick={() => marketLink(t)} className="text-left hover:underline">
+                              {t.marketTitle}
+                            </button>
+                            {!t.live && <span className="ml-xs text-[10px] px-xs rounded bg-secondary text-quaternary font-mono">DEMO</span>}
+                            {t.expiresAt && <div className="text-[10px] text-quaternary font-mono">closes {new Date(t.expiresAt).toISOString().slice(0, 16).replace('T', ' ')} UTC</div>}
+                          </td>
+                          <td className={`${td} font-bold`}>{t.outcomeLabel}</td>
+                          <td className={td}><Venue id={t.venueId} /></td>
+                          <td className={`${td} text-tertiary`}>{sourceLabel(t, labels)}</td>
+                          <td className={td}>{cents(t.entryPrice)}</td>
+                          <td className={td}>
+                            {m?.status === 'awaiting' ? <span className="text-utility-warning-700">settling…</span> : cents(m?.mark)}
+                          </td>
+                          <td className={td}>{t.shares.toLocaleString('en-US')}</td>
+                          <td className={`${td} font-bold ${pnl == null ? 'text-quaternary' : pnlTone(pnl)}`}>{pnl == null ? '—' : usd(pnl)}</td>
+                          <td className={`${td} text-right`}>
+                            <button
+                              onClick={() => close(t)}
+                              disabled={closing === t.id || m?.status === 'awaiting'}
+                              className="px-sm py-xxs rounded bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 font-bold disabled:opacity-50"
+                            >
+                              {closing === t.id ? '…' : 'Close'}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </Panel>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-md">
+            <Panel title="Copy trading" badge="DEEPBOOK PREDICT · ON-CHAIN" badgeVariant="success">
+              <div className="space-y-md">
+                <form onSubmit={addTracked} className="flex flex-col sm:flex-row gap-xs">
+                  <input
+                    value={walletInput}
+                    onChange={e => {
+                      setWalletInput(e.target.value)
+                      setTrackError(null)
+                    }}
+                    placeholder="Wallet address to track 0x…"
+                    aria-label="Wallet address to track"
+                    className="flex-1 min-w-0 bg-secondary border border-secondary rounded-md px-sm py-xs text-xs font-mono text-primary placeholder:text-placeholder focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                  />
+                  <input
+                    value={labelInput}
+                    onChange={e => setLabelInput(e.target.value)}
+                    placeholder="Label"
+                    aria-label="Label"
+                    maxLength={40}
+                    className="sm:w-32 bg-secondary border border-secondary rounded-md px-sm py-xs text-xs text-primary placeholder:text-placeholder focus:outline-none"
+                  />
+                  <button type="submit" className="inline-flex items-center justify-center gap-xxs rounded-lg bg-brand-solid px-md py-xs text-xs font-bold text-primary-on-brand">
+                    <Plus className="size-3.5" /> Track
+                  </button>
+                </form>
+                {trackError && <p className="text-xs text-utility-error-700">{trackError}</p>}
+
+                {journal.tracked.length > 0 && (
+                  <div className="flex flex-wrap gap-xs">
+                    {journal.tracked.map(w => (
+                      <span key={w.address} className="inline-flex items-center gap-xs rounded-lg border border-secondary bg-secondary px-sm py-xxs text-xs">
+                        <button onClick={() => navigate(`/wallets/${w.address}`)} className="text-primary hover:underline">
+                          {w.label}
+                        </button>
+                        <button onClick={() => untrack(w.address)} aria-label={`Stop tracking ${w.label}`} className="text-quaternary hover:text-utility-error-700">
+                          <Trash2 className="size-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <label className="flex items-center gap-sm text-xs text-secondary">
+                  Copy size (USDC)
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={journal.copySize}
+                    onChange={e => setCopySize(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))}
+                    className="w-24 bg-secondary border border-secondary rounded-md px-sm py-xxs font-mono text-primary focus:outline-none"
+                  />
+                </label>
+
+                <CopySignals address={address} />
+                <p className="text-[10px] text-quaternary">
+                  Copies take the same BTC window and direction at its reference strike, priced live. Only DeepBook Predict trades are visible
+                  on-chain per wallet.
+                </p>
+              </div>
+            </Panel>
+
+            <Panel title="Calibration" badge="SETTLED ONLY">
+              {settled.length === 0 ? (
+                <p className="text-xs text-tertiary">
+                  Calibration fills in as DeepBook Predict windows you hold settle: it compares your entry price with how often those positions won.
+                </p>
+              ) : (
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="text-quaternary uppercase text-[11px]">
+                      <th className="py-xxs">Entry price</th>
+                      <th className="py-xxs">Settled</th>
+                      <th className="py-xxs">Won</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buckets.map(b => (
+                      <tr key={b.lo} className="border-t border-secondary">
+                        <td className="py-xxs">{Math.round(b.lo * 100)}–{Math.round((b.lo + 0.2) * 100)}¢</td>
+                        <td className="py-xxs">{b.n}</td>
+                        <td className={`py-xxs ${b.hit == null ? 'text-quaternary' : b.hit >= b.lo + 0.1 ? 'text-utility-success-700' : 'text-utility-error-700'}`}>
+                          {b.hit == null ? '—' : `${Math.round(b.hit * 100)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Panel>
           </div>
-          <div className="text-xs font-semibold text-primary">US CPI YoY above 3% in November?</div>
-          <p className="text-[11px] text-tertiary mt-xs">
-            You predicted: <strong className="text-primary font-mono">72% NO</strong> · Market consensus at pick:{' '}
-            <strong className="text-quaternary font-mono">63.5%</strong> · Final Outcome:{' '}
-            <strong className="text-utility-error-700 font-mono">YES (3.1%)</strong>
-          </p>
-        </div>
-      </div>
 
-      {/* Picks Log Table */}
-      <Panel title="Picks Log" noPadding>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono">
-            <thead>
-              <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-                <th className="py-xs px-sm">Pick ID</th>
-                <th className="py-xs px-sm">Market Event</th>
-                <th className="py-xs px-sm">Your Odds</th>
-                <th className="py-xs px-sm">Consensus at Pick</th>
-                <th className="py-xs px-sm">Stake</th>
-                <th className="py-xs px-sm">Result</th>
-                <th className="py-xs px-sm text-right">Reasoning</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-secondary">
-              {picks.map((p: any) => (
-                <tr
-                  key={p.id}
-                  onClick={() => navigate(`/markets/${p.eventId}`)}
-                  className="hover:bg-secondary-hover cursor-pointer transition-colors"
-                >
-                  <td className="py-sm px-sm text-quaternary">{p.id}</td>
-                  <td className="py-sm px-sm font-sans font-medium text-primary">{p.eventId}</td>
-                  <td className="py-sm px-sm font-bold text-brand-primary">
-                    {(p.probability * 100).toFixed(1)}%
-                  </td>
-                  <td className="py-sm px-sm text-tertiary">
-                    {(p.consensusAtPick * 100).toFixed(1)}%
-                  </td>
-                  <td className="py-sm px-sm">${p.stake || 100}</td>
-                  <td className="py-sm px-sm">
-                    <span
-                      className={`text-[10px] px-xs py-none rounded uppercase font-bold ${
-                        p.result === 'won'
-                          ? 'bg-utility-success-50 text-utility-success-700'
-                          : p.result === 'lost'
-                          ? 'bg-utility-error-50 text-utility-error-700'
-                          : 'bg-secondary text-utility-warning-700'
-                      }`}
-                    >
-                      {p.result}
-                    </span>
-                  </td>
-                  <td className="py-sm px-sm text-right font-sans text-tertiary truncate max-w-xs">
-                    {p.reasoning}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
+          <Panel title="Closed & settled" badge={`${done.length}`} noPadding>
+            <div className="overflow-x-auto">
+              {done.length === 0 ? (
+                <p className="p-xl text-center text-xs text-tertiary">Closed and settled paper trades show up here.</p>
+              ) : (
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
+                      <th className={th}>Market</th>
+                      <th className={th}>Outcome</th>
+                      <th className={th}>Source</th>
+                      <th className={th}>Entry</th>
+                      <th className={th}>Exit</th>
+                      <th className={th}>Result</th>
+                      <th className={th}>PnL</th>
+                      <th className={th}>When</th>
+                      <th className={`${th} text-right`}>Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-secondary">
+                    {done.map(t => (
+                      <tr key={t.id} className="hover:bg-secondary-hover">
+                        <td className={`${td} font-sans font-medium text-primary`}>{t.marketTitle}</td>
+                        <td className={`${td} font-bold`}>{t.outcomeLabel}</td>
+                        <td className={`${td} text-tertiary`}>{sourceLabel(t, labels)}</td>
+                        <td className={td}>{cents(t.entryPrice)}</td>
+                        <td className={td}>{cents(t.exitPrice)}</td>
+                        <td className={td}>
+                          {t.status === 'settled' ? (
+                            <span className={t.exitPrice === 1 ? 'text-utility-success-700' : 'text-utility-error-700'}>
+                              {t.exitPrice === 1 ? 'Won' : 'Lost'}
+                              {t.settlementPrice != null && <span className="text-quaternary"> · BTC ${t.settlementPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>}
+                            </span>
+                          ) : (
+                            <span className="text-tertiary">Closed early</span>
+                          )}
+                        </td>
+                        <td className={`${td} font-bold ${pnlTone(t.realizedPnl ?? 0)}`}>{usd(t.realizedPnl ?? 0)}</td>
+                        <td className={`${td} text-quaternary`}>{t.closedAt ? formatTimeAgo(t.closedAt) : '—'}</td>
+                        <td className={`${td} text-right`}>
+                          <button onClick={() => removeTrade(t.id)} aria-label="Remove from journal" className="p-xxs text-quaternary hover:text-utility-error-700">
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </Panel>
+
+          <p className="text-[10px] text-quaternary flex items-center gap-xs">
+            Paper trades never touch your wallet's funds.
+            <a href="https://docs.sui.io/onchain-finance/deepbook-predict/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-xxs text-brand-primary hover:underline">
+              How DeepBook Predict settles <ExternalLink className="size-3" />
+            </a>
+          </p>
+        </>
+      )}
     </div>
+  )
+}
+
+export default function PickJournalPage() {
+  return (
+    <SuiWalletScope>
+      <JournalWorkspace />
+    </SuiWalletScope>
   )
 }

@@ -19,6 +19,7 @@ import memoryRoutes from './routes/memory.mjs'
 import alertsRoutes from './routes/alerts.mjs'
 import tradeRoutes from './routes/trade.mjs'
 import agentRoutes from './routes/agent.mjs'
+import paperRoutes from './routes/paper.mjs'
 import generalRoutes from './routes/general.mjs'
 import { credentialGuard } from './credential-guard.mjs'
 
@@ -44,6 +45,7 @@ app.use('/api/memory', memoryRoutes)
 app.use('/api/alerts', alertsRoutes)
 app.use('/api/trade', tradeRoutes)
 app.use('/api/agent', agentRoutes)
+app.use('/api/paper', paperRoutes)
 app.use('/api', generalRoutes)
 
 const server = createHttpServer(app)

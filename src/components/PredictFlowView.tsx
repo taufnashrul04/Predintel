@@ -17,7 +17,19 @@ const strikeLabel = (c: Pick<PredictCrowd, 'side' | 'strike' | 'upper'>) =>
     ? `$${Math.round(c.strike).toLocaleString('en-US')}–$${Math.round(c.upper).toLocaleString('en-US')}`
     : `$${Math.round(c.strike).toLocaleString('en-US')}`
 
-export default function PredictFlowView({ flow, error }: { flow: PredictFlow | null; error: string | null }) {
+export default function PredictFlowView({
+  flow,
+  error,
+  onPaperBuy,
+  paperSize,
+  buying
+}: {
+  flow: PredictFlow | null
+  error: string | null
+  onPaperBuy?: (crowd: PredictCrowd & { side: 'up' | 'down' }, key: string) => void
+  paperSize?: number
+  buying?: string | null
+}) {
   const navigate = useNavigate()
   if (error && !flow) return <p className="p-xl text-center text-xs text-utility-error-700">Couldn't load on-chain flow: {error}</p>
   if (!flow) {
@@ -102,6 +114,15 @@ export default function PredictFlowView({ flow, error }: { flow: PredictFlow | n
                     {usdFmt(c.volume)} · avg {c.avgProbability != null ? `${(c.avgProbability * 100).toFixed(1)}¢` : '—'}
                     {c.closesAt && ` · closed ${formatTimeAgo(c.closesAt)}`}
                   </div>
+                  {onPaperBuy && c.side !== 'range' && c.closesAt && Date.parse(c.closesAt) > Date.now() + 20_000 && (
+                    <button
+                      onClick={() => onPaperBuy(c as PredictCrowd & { side: 'up' | 'down' }, `${c.marketId}-${c.side}`)}
+                      disabled={buying === `${c.marketId}-${c.side}`}
+                      className="w-full rounded bg-brand-solid px-sm py-xxs text-[11px] font-bold text-primary-on-brand disabled:opacity-50"
+                    >
+                      Paper buy {M.label} ${paperSize}
+                    </button>
+                  )}
                   <div className="flex flex-wrap gap-xxs">
                     {c.owners.map((o, i) => (
                       <button

@@ -6,6 +6,9 @@ import { VENUE_MAP } from '../lib/config/venues'
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { usePredictFlow } from '../lib/predictFlow'
 import PredictFlowView from './PredictFlowView'
+import CopySignals from './journal/CopySignals'
+import { useJournal, usePaperSession } from '../lib/paperJournal'
+import { useApp } from '../context/AppContext'
 
 interface CrowdedTrade {
   eventId: string
@@ -34,6 +37,27 @@ export default function CrowdedTradesPanel() {
   const [min, setMin] = useState(3)
   const [groups, setGroups] = useState<CrowdedTrade[] | null>(null)
   const { flow, error: flowError } = usePredictFlow()
+  const { showToast } = useApp()
+  const { session } = usePaperSession()
+  const { journal, paperBuy } = useJournal(session?.address)
+  const [buying, setBuying] = useState<string | null>(null)
+
+  // One-click paper trade from a suggestion; sizes use the journal's copy size.
+  const paperFrom = async (key: string, order: { market: string; outcome: string }, label: string) => {
+    if (!session) {
+      showToast('Sign in on the Journal page to paper trade.')
+      return navigate('/journal')
+    }
+    setBuying(key)
+    try {
+      const t = await paperBuy({ ...order, amount: journal.copySize }, { kind: 'dashboard', label })
+      showToast(`Paper ${t.outcomeLabel}: ${t.shares} sh @ ${(t.entryPrice * 100).toFixed(1)}¢ added to your journal`)
+    } catch (err: any) {
+      showToast(`Paper trade failed: ${err.message}`)
+    } finally {
+      setBuying(null)
+    }
+  }
 
   useEffect(() => {
     setGroups(null)
@@ -86,7 +110,28 @@ export default function CrowdedTradesPanel() {
       noPadding
     >
       {source === 'onchain' ? (
-        <PredictFlowView flow={flow} error={flowError} />
+        <>
+          <PredictFlowView
+            flow={flow}
+            error={flowError}
+            paperSize={journal.copySize}
+            buying={buying}
+            onPaperBuy={(c, key) => paperFrom(key, { market: `dbp:${c.marketId}`, outcome: c.side }, `${c.accounts} on-chain traders`)}
+          />
+          <div className="px-md pb-md space-y-xs">
+            <div className="text-quaternary uppercase text-[11px] font-semibold font-mono">Your copy signals</div>
+            {session ? (
+              <CopySignals address={session.address} limit={4} />
+            ) : (
+              <p className="text-xs text-tertiary">
+                <button onClick={() => navigate('/journal')} className="text-brand-primary hover:underline">
+                  Sign in on the Journal
+                </button>{' '}
+                to track wallets and copy their trades on paper.
+              </p>
+            )}
+          </div>
+        </>
       ) : groups === null ? (
         <div className="p-md grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-sm">
           {[0, 1, 2, 3].map(i => (
@@ -98,10 +143,13 @@ export default function CrowdedTradesPanel() {
       ) : (
         <div className="p-md grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-sm">
           {groups.map(g => (
-            <button
+            <div
               key={`${g.eventId}-${g.outcomeId}-${g.side}`}
+              role="link"
+              tabIndex={0}
               onClick={() => navigate(`/markets/${g.slug}`)}
-              className="text-left p-sm rounded-lg border border-secondary bg-secondary hover:bg-secondary-hover transition-colors space-y-xs"
+              onKeyDown={e => e.key === 'Enter' && navigate(`/markets/${g.slug}`)}
+              className="text-left p-sm rounded-lg border border-secondary bg-secondary hover:bg-secondary-hover transition-colors space-y-xs cursor-pointer"
             >
               <div className="flex items-center justify-between gap-sm">
                 <span className="inline-flex items-center gap-xs text-sm font-bold text-primary font-mono">
@@ -157,7 +205,19 @@ export default function CrowdedTradesPanel() {
                 </span>
                 <span>last {formatTimeAgo(g.lastTradeAt)}</span>
               </div>
-            </button>
+              {g.side === 'buy' && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    paperFrom(`${g.eventId}-${g.outcomeId}`, { market: g.slug, outcome: g.outcomeId }, `${g.walletCount} tracked wallets (demo)`)
+                  }}
+                  disabled={buying === `${g.eventId}-${g.outcomeId}`}
+                  className="w-full rounded bg-brand-solid px-sm py-xxs text-[11px] font-bold text-primary-on-brand hover:bg-brand-solid-hover disabled:opacity-50"
+                >
+                  {buying === `${g.eventId}-${g.outcomeId}` ? 'Placing…' : `Paper buy ${g.outcomeLabel} $${journal.copySize}`}
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}

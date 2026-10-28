@@ -9,6 +9,7 @@ import { fmtToken, useWalletSnapshot } from '../components/wallets/LiveWalletPan
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { MyWallet, parseSuiAddress, useMyWallets } from '../lib/myWallets'
 import { PredictFlow, shortId, usdFmt, usePredictFlow } from '../lib/predictFlow'
+import { useJournal, usePaperSession } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
 type View = 'all' | 'following' | 'mine' | 'onchain'
@@ -131,6 +132,9 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
   const navigate = useNavigate()
   const { isMine, add } = useMyWallets()
   const { showToast } = useApp()
+  const { session } = usePaperSession()
+  const { journal, track } = useJournal(session?.address)
+  const isCopied = (owner: string) => journal.tracked.some(w => w.address === owner)
 
   return (
     <Panel title="On-chain traders · DeepBook Predict" badge="SUI MAINNET" badgeVariant="success" noPadding>
@@ -147,7 +151,7 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
                 <th className={th}>Up / Down</th>
                 <th className={th}>Windows</th>
                 <th className={th}>Last trade</th>
-                <th className={`${th} text-right`}>Track</th>
+                <th className={`${th} text-right`}>Watch · Copy</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary">
@@ -173,7 +177,26 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
                   </td>
                   <td className={`${td} text-tertiary`}>{t.markets}</td>
                   <td className={`${td} text-quaternary`}>{formatTimeAgo(t.lastAt)}</td>
-                  <td className={`${td} text-right`}>
+                  <td className={`${td} text-right whitespace-nowrap`}>
+                    {t.owner && (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (!session) {
+                            showToast('Sign in on the Journal page to copy wallets.')
+                            return navigate('/journal')
+                          }
+                          if (isCopied(t.owner!)) return
+                          track(t.owner!, `Predict ${shortId(t.owner!)}`)
+                          showToast('Added to your journal copy list')
+                        }}
+                        className={`mr-xs px-sm py-xxs rounded font-sans ${
+                          isCopied(t.owner) ? 'bg-utility-success-50 text-utility-success-700' : 'bg-brand-solid text-primary-on-brand font-bold'
+                        }`}
+                      >
+                        {isCopied(t.owner) ? 'Copying' : 'Copy'}
+                      </button>
+                    )}
                     {t.owner && !isMine(t.owner) && (
                       <button
                         onClick={e => {
@@ -183,10 +206,10 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
                         }}
                         className="px-sm py-xxs rounded bg-secondary text-quaternary hover:text-primary font-sans"
                       >
-                        + Track
+                        + Watch
                       </button>
                     )}
-                    {t.owner && isMine(t.owner) && <span className="text-utility-success-700 font-sans">Tracked</span>}
+                    {t.owner && isMine(t.owner) && <span className="text-utility-success-700 font-sans">Watching</span>}
                   </td>
                 </tr>
               ))}
