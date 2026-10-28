@@ -89,17 +89,30 @@ Fills are **simulated** until the Move calls for WaterX/DeepBook and the vault c
 
 ---
 
+## Local setup
+
+Put your Tatum key in `Predintel/.env` (git-ignored); `npm run dev` loads it with `--env-file-if-exists`:
+
+```
+TATUM_API_KEY=your_key
+```
+
+`GET /api/tatum/status` returns `connected` once the key works.
+
+---
+
 ## Wallets & Live Data
 
 - **All forecasters / Following / My wallets** tabs on `/wallets`. My wallets are Sui addresses saved in the browser (localStorage), added by address or from a connected wallet.
 - Any Sui address can be pasted into the search box and checked live at `/wallets/:address`.
-- Live wallet data (`GET /api/wallets/:address/live`): SUI and USDC balances, token count, and the last 10 transactions from the public **Sui GraphQL** service (public fullnodes no longer serve JSON-RPC).
+- Live wallet data (`GET /api/wallets/:address/live`): SUI and USDC balances through **Tatum's Sui gRPC gateway** (`sui-mainnet-grpc.gateway.tatum.io`, native gRPC via `@protobuf-ts/grpc-transport`), plus token count and the last 10 transactions from **Sui GraphQL**. Without `TATUM_API_KEY`, balances fall back to GraphQL. Tatum's Sui JSON-RPC endpoint returns 404 (Sui retired JSON-RPC), and the free plan allows 3 requests/second, so calls are throttled.
+- **On-chain traders** (`GET /api/predict-flow`): real DeepBook Predict order flow from `OrderEnqueued` / `QueuedOrderFilled` events (Sui GraphQL; Tatum blocks `ListEvents`). Fills are joined to their orders for side and strike, and Predict accounts are mapped to owner wallets via `AccountCreated` events, scanned once in the background. Shown on the Dashboard (Crowded trades → On-chain) and Wallets (On-chain traders).
 - Live spot prices (`GET /api/live/prices`): SUI, BTC, WAL, DEEP from the **DeepBook indexer**, used for wallet value and the underlying-price chip on the Trade tab.
 - **Live prediction markets on the Trade tab** (`GET /api/trade/live-markets`, `GET /api/trade/live-markets/:id`):
   - **WaterX**: event list and per-option YES ask / NO ask from WaterX's public predict API (`api.waterx.app/predict/events`). This API is undocumented and may change without notice.
   - **DeepBook Predict** (Sui mainnet): open BTC up/down windows and their on-chain prices at the reference strike, read through `@mysten/deepbook-v3/predict`. Windows roll every few minutes.
   - Live orders price at the venue's live ask (buy) or bid (sell); fills are still simulated.
-- **Crowded trades** on the Dashboard (`GET /api/crowded?min=3`): outcomes where several tracked wallets took the same side.
+- **Crowded trades → Demo** on the Dashboard (`GET /api/crowded?min=3`): outcomes where several mock tracked wallets took the same side.
 - Forecaster stats, wallet trades (and so crowded trades), and the Demo markets are still mock data.
 
 ---

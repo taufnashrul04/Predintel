@@ -8,9 +8,10 @@ import SuiWalletScope from '../components/SuiWalletScope'
 import { fmtToken, useWalletSnapshot } from '../components/wallets/LiveWalletPanel'
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { MyWallet, parseSuiAddress, useMyWallets } from '../lib/myWallets'
+import { PredictFlow, shortId, usdFmt, usePredictFlow } from '../lib/predictFlow'
 import { useApp } from '../context/AppContext'
 
-type View = 'all' | 'following' | 'mine'
+type View = 'all' | 'following' | 'mine' | 'onchain'
 
 const th = 'py-xs px-sm'
 const td = 'py-sm px-sm'
@@ -123,6 +124,82 @@ function MyWalletRow({ wallet, onRemove }: { wallet: MyWallet; onRemove: (w: MyW
         </button>
       </td>
     </tr>
+  )
+}
+
+function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; error: string | null }) {
+  const navigate = useNavigate()
+  const { isMine, add } = useMyWallets()
+  const { showToast } = useApp()
+
+  return (
+    <Panel title="On-chain traders · DeepBook Predict" badge="SUI MAINNET" badgeVariant="success" noPadding>
+      <div className="overflow-x-auto">
+        {error && !flow && <p className="p-xl text-center text-xs text-utility-error-700">Couldn't load traders: {error}</p>}
+        {!flow && !error && <div className="m-md h-32 rounded bg-secondary animate-pulse" />}
+        {flow && (
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
+                <th className={th}>Wallet</th>
+                <th className={th}>Volume</th>
+                <th className={th}>Fills</th>
+                <th className={th}>Up / Down</th>
+                <th className={th}>Windows</th>
+                <th className={th}>Last trade</th>
+                <th className={`${th} text-right`}>Track</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-secondary">
+              {flow.traders.map(t => (
+                <tr
+                  key={t.accountId}
+                  onClick={() => t.owner && navigate(`/wallets/${t.owner}`)}
+                  className={`transition-colors ${t.owner ? 'hover:bg-secondary-hover cursor-pointer' : ''}`}
+                >
+                  <td className={`${td} text-primary`}>
+                    {t.owner ? shortId(t.owner) : <span className="text-quaternary">resolving owner…</span>}
+                    <div className="text-[10px] text-quaternary">account {shortId(t.accountId)}</div>
+                  </td>
+                  <td className={`${td} font-bold text-primary`}>{usdFmt(t.volume)}</td>
+                  <td className={td}>
+                    {t.fills}
+                    {t.sells > 0 && <span className="text-quaternary"> ({t.sells} sells)</span>}
+                  </td>
+                  <td className={td}>
+                    <span className="text-utility-success-700">{t.up}</span>
+                    <span className="text-quaternary"> / </span>
+                    <span className="text-utility-error-700">{t.down}</span>
+                  </td>
+                  <td className={`${td} text-tertiary`}>{t.markets}</td>
+                  <td className={`${td} text-quaternary`}>{formatTimeAgo(t.lastAt)}</td>
+                  <td className={`${td} text-right`}>
+                    {t.owner && !isMine(t.owner) && (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          const problem = add(t.owner!, `Predict trader ${shortId(t.owner!)}`)
+                          showToast(problem ?? 'Added to My wallets')
+                        }}
+                        className="px-sm py-xxs rounded bg-secondary text-quaternary hover:text-primary font-sans"
+                      >
+                        + Track
+                      </button>
+                    )}
+                    {t.owner && isMine(t.owner) && <span className="text-utility-success-700 font-sans">Tracked</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {flow && (
+          <p className="px-sm py-xs text-[10px] text-quaternary border-t border-secondary">
+            {flow.totals.fills} fills since {flow.window.from ? formatTimeAgo(flow.window.from) : '—'} · {flow.source}
+          </p>
+        )}
+      </div>
+    </Panel>
   )
 }
 
@@ -245,10 +322,11 @@ function WalletsWorkspace() {
   const [wallets, setWallets] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
-  const view = (['following', 'mine'].includes(searchParams.get('view') ?? '') ? searchParams.get('view') : 'all') as View
+  const view = (['following', 'mine', 'onchain'].includes(searchParams.get('view') ?? '') ? searchParams.get('view') : 'all') as View
   const navigate = useNavigate()
   const { showToast } = useApp()
   const { wallets: mine } = useMyWallets()
+  const { flow, error: flowError } = usePredictFlow()
 
   useEffect(() => {
     fetch('/api/wallets')
@@ -278,9 +356,10 @@ function WalletsWorkspace() {
   const lookupIsKnown = lookupAddress && wallets.some(w => w.address.toLowerCase() === lookupAddress)
 
   const tabs: { id: View; label: string; count: number }[] = [
-    { id: 'all', label: 'All forecasters', count: wallets.length },
+    { id: 'all', label: 'Forecasters (demo)', count: wallets.length },
     { id: 'following', label: 'Following', count: followed.length },
-    { id: 'mine', label: 'My wallets', count: mine.length }
+    { id: 'mine', label: 'My wallets', count: mine.length },
+    { id: 'onchain', label: 'On-chain traders', count: flow?.traders.length ?? 0 }
   ]
 
   return (
@@ -326,6 +405,8 @@ function WalletsWorkspace() {
 
       {view === 'mine' ? (
         <MyWalletsSection />
+      ) : view === 'onchain' ? (
+        <OnchainTradersSection flow={flow} error={flowError} />
       ) : (
         <Panel
           title={view === 'following' ? 'Wallets you follow' : 'Tracked forecasters & smart wallets'}

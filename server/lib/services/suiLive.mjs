@@ -1,3 +1,5 @@
+import { normalizeStructTag } from '@mysten/sui/utils'
+import { withTatumSui } from '../tatumSui.mjs'
 // Live Sui mainnet reads. Public fullnodes dropped JSON-RPC, so wallet data comes from
 // the Sui GraphQL service and spot prices from the DeepBook indexer. Both need no key.
 const SUI_GRAPHQL_URL = 'https://graphql.mainnet.sui.io/graphql'
@@ -87,16 +89,38 @@ async function graphql(query, variables) {
 
 const toUnits = (raw, decimals) => Number(raw ?? 0) / 10 ** decimals
 
+// Balances through Tatum's Sui gRPC gateway; null when no key is set, so GraphQL's are used.
+async function tatumBalances(address) {
+  return withTatumSui(async client => {
+    const page = await client.listBalances({ owner: address, limit: 50 })
+    const find = type => page.balances.find(b => normalizeStructTag(b.coinType) === type)
+    let usdc = find(USDC_TYPE)
+    if (!usdc && page.hasNextPage) {
+      usdc = (await withTatumSui(c => c.getBalance({ owner: address, coinType: USDC_TYPE }))).balance
+    }
+    return {
+      sui: find(SUI_TYPE)?.balance ?? '0',
+      usdc: usdc?.balance ?? '0',
+      count: page.balances.length,
+      more: page.hasNextPage
+    }
+  })
+}
+
 export function getWalletSnapshot(address) {
   return cached(`wallet:${address}`, WALLET_TTL_MS, async () => {
-    const [data, priceData] = await Promise.all([
+    const [data, priceData, viaTatum] = await Promise.all([
       graphql(WALLET_QUERY, { address }),
-      getLivePrices().catch(() => null)
+      getLivePrices().catch(() => null),
+      tatumBalances(address).catch(err => {
+        console.warn('[tatum] Sui balances failed, using GraphQL:', err.message)
+        return null
+      })
     ])
     const balances = data.address?.balances?.nodes ?? []
     const raw = type => balances.find(b => b.coinType.repr === type)?.totalBalance
-    const sui = toUnits(raw(SUI_TYPE), 9)
-    const usdc = toUnits(raw(USDC_TYPE), 6)
+    const sui = toUnits(viaTatum ? viaTatum.sui : raw(SUI_TYPE), 9)
+    const usdc = toUnits(viaTatum ? viaTatum.usdc : raw(USDC_TYPE), 6)
     const suiPrice = priceData?.prices.SUI?.price ?? null
 
     const transactions = (data.address?.transactions?.nodes ?? [])
@@ -116,7 +140,8 @@ export function getWalletSnapshot(address) {
 
     return {
       address,
-      source: 'Sui GraphQL (mainnet)',
+      source: viaTatum ? 'Balances: Tatum Sui gRPC · Transactions: Sui GraphQL' : 'Sui GraphQL (mainnet)',
+      balanceSource: viaTatum ? 'tatum' : 'graphql',
       fetchedAt: new Date().toISOString(),
       sui,
       usdc,

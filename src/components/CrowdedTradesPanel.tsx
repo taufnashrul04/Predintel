@@ -4,6 +4,8 @@ import { Users } from 'lucide-react'
 import { Panel } from './SharedUI'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
+import { usePredictFlow } from '../lib/predictFlow'
+import PredictFlowView from './PredictFlowView'
 
 interface CrowdedTrade {
   eventId: string
@@ -28,8 +30,10 @@ const MIN_OPTIONS = [3, 4, 5]
 
 export default function CrowdedTradesPanel() {
   const navigate = useNavigate()
+  const [source, setSource] = useState<'onchain' | 'demo'>('onchain')
   const [min, setMin] = useState(3)
   const [groups, setGroups] = useState<CrowdedTrade[] | null>(null)
+  const { flow, error: flowError } = usePredictFlow()
 
   useEffect(() => {
     setGroups(null)
@@ -42,9 +46,26 @@ export default function CrowdedTradesPanel() {
   return (
     <Panel
       title="Crowded trades"
-      badge="WALLETS MOVING TOGETHER"
-      badgeVariant="warning"
+      badge={source === 'onchain' ? 'DEEPBOOK PREDICT · ON-CHAIN' : 'TRACKED WALLETS · DEMO'}
+      badgeVariant={source === 'onchain' ? 'success' : 'warning'}
       actions={
+        <div className="flex items-center gap-sm">
+          <div className="flex gap-xxs bg-secondary p-xxs rounded-lg border border-secondary" role="tablist" aria-label="Crowd source">
+            {(['onchain', 'demo'] as const).map(src => (
+              <button
+                key={src}
+                role="tab"
+                aria-selected={source === src}
+                onClick={() => setSource(src)}
+                className={`px-sm py-xxs rounded text-[11px] font-bold whitespace-nowrap ${
+                  source === src ? 'bg-brand-solid text-primary-on-brand' : 'text-quaternary hover:text-primary'
+                }`}
+              >
+                {src === 'onchain' ? 'On-chain' : 'Demo'}
+              </button>
+            ))}
+          </div>
+          {source === 'demo' && (
         <label className="flex items-center gap-xs text-xs font-mono text-quaternary">
           Min wallets
           <select
@@ -59,10 +80,14 @@ export default function CrowdedTradesPanel() {
             ))}
           </select>
         </label>
+          )}
+        </div>
       }
       noPadding
     >
-      {groups === null ? (
+      {source === 'onchain' ? (
+        <PredictFlowView flow={flow} error={flowError} />
+      ) : groups === null ? (
         <div className="p-md grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-sm">
           {[0, 1, 2, 3].map(i => (
             <div key={i} className="h-36 rounded-lg bg-secondary animate-pulse" />

@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server/index.mjs"
+    "dev": "node --env-file-if-exists=.env server/index.mjs"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.6",
     "@mysten/dapp-kit-react": "^2.1.43",
     "@mysten/deepbook-v3": "^2.8.2",
     "@mysten/sui": "^2.38.0",
+    "@protobuf-ts/grpc-transport": "^2.11.1",
     "@vitejs/plugin-react": "^4.3.1",
     "express": "^4.21.0",
     "lucide-react": "^1.31.0",

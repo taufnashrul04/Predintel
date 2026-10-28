@@ -8,6 +8,7 @@ import { detectDivergences, topMovers, consensusProbability, detectCrowdedTrades
 import { TradeError, executeAgentOrder } from '../lib/services/trading.mjs'
 import { LiveDataError, getLivePrices } from '../lib/services/suiLive.mjs'
 import { loadLiveMarket } from './trade.mjs'
+import { getPredictFlow } from '../lib/services/predictFlow.mjs'
 
 const router = Router()
 
@@ -43,6 +44,17 @@ router.get('/crowded', (req, res) => {
       followed: serverStore.followedWallets
     })
   )
+})
+
+// Real order flow and traders on DeepBook Predict (Sui mainnet).
+router.get('/predict-flow', async (_req, res) => {
+  try {
+    res.json(await getPredictFlow())
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[predict-flow]', err)
+    res.status(500).json({ error: 'Unexpected error loading DeepBook Predict flow.' })
+  }
 })
 
 // Platform Stats
