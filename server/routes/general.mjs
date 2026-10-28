@@ -4,8 +4,10 @@ import { MOCK_EVENTS } from '../lib/mock/events.mjs'
 import { MOCK_QUOTES } from '../lib/mock/quotes.mjs'
 import { MOCK_TRADES, MOCK_WALLETS } from '../lib/mock/wallets.mjs'
 import { VENUES } from '../lib/venues.mjs'
-import { detectDivergences, topMovers, consensusProbability } from '../lib/services/analytics.mjs'
-import { validateSuiExecution } from '../lib/services/payments.mjs'
+import { detectDivergences, topMovers, consensusProbability, detectCrowdedTrades } from '../lib/services/analytics.mjs'
+import { TradeError, executeAgentOrder } from '../lib/services/trading.mjs'
+import { LiveDataError, getLivePrices } from '../lib/services/suiLive.mjs'
+import { loadLiveMarket } from './trade.mjs'
 
 const router = Router()
 
@@ -30,6 +32,17 @@ router.get('/movers', (_req, res) => {
 router.get('/whales', (_req, res) => {
   const whaleTrades = MOCK_TRADES.filter(t => t.notional >= 15000).slice(0, 30)
   res.json(whaleTrades)
+})
+
+// Crowded trades: many tracked wallets on the same side of the same outcome.
+router.get('/crowded', (req, res) => {
+  const minWallets = Math.max(2, Math.min(10, parseInt(req.query.min, 10) || 3))
+  res.json(
+    detectCrowdedTrades(MOCK_TRADES, MOCK_WALLETS, MOCK_EVENTS, {
+      minWallets,
+      followed: serverStore.followedWallets
+    })
+  )
 })
 
 // Platform Stats
@@ -120,85 +133,31 @@ router.post('/picks', (req, res) => {
   res.json(newPick)
 })
 
+// Live spot prices from DeepBook (SUI, BTC, WAL, DEEP in USDC).
+router.get('/live/prices', async (_req, res) => {
+  try {
+    res.json(await getLivePrices())
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    res.status(500).json({ error: 'Unexpected error loading live prices.' })
+  }
+})
+
 // Venues Status
 router.get('/venues/status', (_req, res) => {
   res.json(VENUES)
 })
 
-// Agent Execution (Bug fix g - Sui only validation)
-router.post('/execute', (req, res) => {
-  const { eventId, venueId, outcomeId = 'yes', side = 'buy', amount = 100 } = req.body
-  if (!eventId || !venueId) {
-    return res.status(400).json({ error: 'Missing eventId or venueId' })
-  }
-
+// Agent mode: the server prices the order from the books and enforces the agent's risk rules.
+router.post('/execute', async (req, res) => {
   try {
-    const venue = validateSuiExecution(venueId)
-    const amt = parseFloat(amount) || 100
-    const price = venueId === 'waterx' ? 0.615 : 0.608
-    const feeRate = venueId === 'waterx' ? 0.003 : 0.0015
-    const fee = Math.round(amt * feeRate * 100) / 100
-    const shares = Math.round((amt - fee) / price)
-
-    const execution = {
-      id: `exec-${Date.now()}`,
-      venueId,
-      chain: 'sui',
-      eventId,
-      outcomeId,
-      side,
-      amount: amt,
-      price,
-      shares,
-      fee,
-      status: 'pending',
-      txDigest: '',
-      createdAt: new Date().toISOString()
-    }
-    serverStore.executions.unshift(execution)
-
-    // Add to user trade history and deduct from agent wallet
-    serverStore.agentWallet.spentToday += amt
-
-    setTimeout(() => {
-      execution.status = 'confirmed'
-      execution.txDigest = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`
-
-      serverStore.userTradesHistory.unshift({
-        id: `uth-${Date.now()}`,
-        marketTitle: eventId,
-        outcomeId,
-        side,
-        mode: 'Agent (x402 · Sui)',
-        venueId,
-        shares,
-        price,
-        amount: amt,
-        fee,
-        status: 'confirmed',
-        txDigest: execution.txDigest,
-        t: new Date().toISOString()
-      })
-
-      // Add position
-      serverStore.userPositions.unshift({
-        id: `pos-${Date.now()}`,
-        marketSlug: eventId,
-        marketTitle: eventId,
-        outcomeId,
-        outcomeLabel: outcomeId.toUpperCase(),
-        venueId,
-        shares,
-        avgPrice: price,
-        currentPrice: price,
-        pnl: 0,
-        returnPct: 0
-      })
-    }, 2800)
-
+    await loadLiveMarket(req.body)
+    const { execution } = executeAgentOrder(req.body ?? {})
     res.json(execution)
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    if (err instanceof TradeError || err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[execute]', err)
+    res.status(500).json({ error: 'Unexpected execution error.' })
   }
 })
 

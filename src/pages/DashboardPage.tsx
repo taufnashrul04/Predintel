@@ -24,6 +24,7 @@ import {
 import { Panel, StatCard, VenuePill, ChangeBadge } from '../components/SharedUI'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
+import CrowdedTradesPanel from '../components/CrowdedTradesPanel'
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<any>({
@@ -278,6 +279,8 @@ export default function DashboardPage() {
           </div>
         </Panel>
       </div>
+
+      <CrowdedTradesPanel />
 
       {/* Whale Tape & Venue Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">

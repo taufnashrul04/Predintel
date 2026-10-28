@@ -29,7 +29,7 @@ PredictIntel is an institutional-grade analytics, surveillance, and automated ex
 │       ├── store.mjs            # Server-side in-memory store (picks, memory, alerts, agent wallet, positions, orders)
 │       ├── mock/                # Seeded deterministic generators (mulberry32)
 │       ├── adapters/            # Individual venue adapters implementing standard interface
-│       └── services/            # Pure business logic: aggregator, analytics, trading, memory recall, payments
+│       └── services/            # Pure business logic: aggregator, analytics, trading (quotes, routing, agent rules, settlement), memory
 ├── src/
 │   ├── pages/                   # Lazy-loaded route views
 │   │   ├── DashboardPage.tsx    # KPI strip, Memory insights, Divergence scanner, Top movers, Whale tape, charts
@@ -78,10 +78,29 @@ Store / Tatum Gateway RPC (server/lib/store.mjs & Tatum Gateway)
 
 ## Trade Tab Modes
 
-1. **Agent (x402 · Sui)**:
-   PredictIntel's autonomous agent executes the transaction directly from the agent's funded trading vault. Enabled strictly for Sui venues (**WaterX AMM** and **DeepBook**).
-2. **Direct (Sui Wallet Move Call)**:
-   The user signs an on-chain Move call using their connected Sui wallet. Built via `POST /api/trade/build` and submitted via `POST /api/trade/submit`. Non-Sui venues provide deep link-outs to the venue's web app.
+In-app trading is **Sui-only**: markets, routes and order books are limited to WaterX and DeepBook (`GET /api/trade/markets`). The server prices every order by walking those order books (`GET /api/trade/quote`); the client never supplies prices or share counts.
+
+1. **Direct (your wallet)**:
+   Connect a Sui wallet (`@mysten/dapp-kit-react`). `POST /api/trade/build` returns an order intent, the wallet signs it with `signPersonalMessage`, and `POST /api/trade/submit` verifies the signature against the signer address before filling. Intents expire after 2 minutes and can't be replayed. Non-Sui venues show the route with a link out to the venue.
+2. **Agent (x402 · Sui)**:
+   `POST /api/execute` routes only to Sui venues allowed by the agent rules (WaterX, DeepBook) and enforces max per trade, vault balance, daily budget, and max slippage. Limit orders that don't fill reserve funds from the vault until filled or cancelled.
+
+Fills are **simulated** until the Move calls for WaterX/DeepBook and the vault contract are wired: trades carry a `sim_…` ref instead of a Sui tx digest.
+
+---
+
+## Wallets & Live Data
+
+- **All forecasters / Following / My wallets** tabs on `/wallets`. My wallets are Sui addresses saved in the browser (localStorage), added by address or from a connected wallet.
+- Any Sui address can be pasted into the search box and checked live at `/wallets/:address`.
+- Live wallet data (`GET /api/wallets/:address/live`): SUI and USDC balances, token count, and the last 10 transactions from the public **Sui GraphQL** service (public fullnodes no longer serve JSON-RPC).
+- Live spot prices (`GET /api/live/prices`): SUI, BTC, WAL, DEEP from the **DeepBook indexer**, used for wallet value and the underlying-price chip on the Trade tab.
+- **Live prediction markets on the Trade tab** (`GET /api/trade/live-markets`, `GET /api/trade/live-markets/:id`):
+  - **WaterX**: event list and per-option YES ask / NO ask from WaterX's public predict API (`api.waterx.app/predict/events`). This API is undocumented and may change without notice.
+  - **DeepBook Predict** (Sui mainnet): open BTC up/down windows and their on-chain prices at the reference strike, read through `@mysten/deepbook-v3/predict`. Windows roll every few minutes.
+  - Live orders price at the venue's live ask (buy) or bid (sell); fills are still simulated.
+- **Crowded trades** on the Dashboard (`GET /api/crowded?min=3`): outcomes where several tracked wallets took the same side.
+- Forecaster stats, wallet trades (and so crowded trades), and the Demo markets are still mock data.
 
 ---
 

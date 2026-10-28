@@ -54,3 +54,48 @@ export function topMovers(quotes, limit = 6) {
     .sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h))
     .slice(0, limit)
 }
+
+// Positions several tracked wallets took on the same side of the same outcome.
+export function detectCrowdedTrades(trades, wallets, events, { minWallets = 3, followed = new Set(), limit = 8 } = {}) {
+  const walletByAddress = new Map(wallets.map(w => [w.address.toLowerCase(), w]))
+  const groups = new Map()
+  for (const t of trades) {
+    const key = `${t.eventId}|${t.outcomeId}|${t.side}`
+    const g = groups.get(key) ?? { eventId: t.eventId, outcomeId: t.outcomeId, side: t.side, trades: [] }
+    g.trades.push(t)
+    groups.set(key, g)
+  }
+
+  return [...groups.values()]
+    .map(g => {
+      const addresses = [...new Set(g.trades.map(t => t.wallet.toLowerCase()))]
+      const event = events.find(e => e.id === g.eventId)
+      const notional = g.trades.reduce((s, t) => s + t.notional, 0)
+      const shares = g.trades.reduce((s, t) => s + t.size, 0)
+      const members = addresses
+        .map(a => walletByAddress.get(a))
+        .filter(Boolean)
+        .sort((a, b) => b.credibilityScore - a.credibilityScore)
+      return {
+        eventId: g.eventId,
+        slug: event?.slug ?? g.eventId,
+        title: event?.title ?? g.eventId,
+        outcomeId: g.outcomeId,
+        outcomeLabel: event?.outcomes.find(o => o.id === g.outcomeId)?.label ?? g.outcomeId.toUpperCase(),
+        side: g.side,
+        walletCount: addresses.length,
+        whaleCount: members.filter(w => w.isWhale).length,
+        followedCount: addresses.filter(a => followed.has(a)).length,
+        avgCredibility: members.length ? Math.round(members.reduce((s, w) => s + w.credibilityScore, 0) / members.length) : null,
+        tradeCount: g.trades.length,
+        notional: Math.round(notional),
+        avgPrice: shares > 0 ? Math.round((notional / shares) * 1000) / 1000 : null,
+        venues: [...new Set(g.trades.map(t => t.venueId))],
+        lastTradeAt: g.trades.reduce((m, t) => (t.t > m ? t.t : m), ''),
+        wallets: members.slice(0, 5).map(w => ({ address: w.address, label: w.label ?? null, isWhale: w.isWhale }))
+      }
+    })
+    .filter(g => g.walletCount >= minWallets)
+    .sort((a, b) => b.walletCount - a.walletCount || b.notional - a.notional)
+    .slice(0, limit)
+}

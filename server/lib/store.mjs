@@ -34,6 +34,7 @@ class ServerStore {
     ]
 
     this.executions = []
+    this.directIntents = new Map()
     this.followedWallets = new Set([MOCK_WALLETS[0].address.toLowerCase()])
     this.watchlistedEvents = new Set(['evt-btc-150k', 'evt-sui-5'])
 
@@ -45,6 +46,7 @@ class ServerStore {
       balanceSUI: 128.50,
       dailyBudget: 5000.00,
       spentToday: 1350.00,
+      spentDate: new Date().toISOString().slice(0, 10),
       rules: {
         maxPerTrade: 1000.00,
         dailyBudget: 5000.00,
@@ -63,18 +65,18 @@ class ServerStore {
 
     // Trade tab user orders and positions
     this.openOrders = [
-      { id: 'ord-1', marketSlug: 'btc-above-150k-dec-31', marketTitle: 'BTC above $150k on Dec 31?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'deepbook', type: 'limit', side: 'buy', price: 0.46, amount: 250, filled: 0, status: 'open', createdAt: new Date(Date.now() - 7200000).toISOString() },
-      { id: 'ord-2', marketSlug: 'fed-cuts-rates-december-meeting', marketTitle: 'Fed cuts rates at December meeting?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'waterx', type: 'limit', side: 'buy', price: 0.72, amount: 400, filled: 0, status: 'open', createdAt: new Date(Date.now() - 14400000).toISOString() }
+      { id: 'ord-1', eventId: 'evt-btc-150k', marketSlug: 'btc-above-150k-dec-31', marketTitle: 'BTC above $150k on Dec 31?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'deepbook', type: 'limit', side: 'buy', price: 0.46, amount: 250, filled: 0, status: 'open', createdAt: new Date(Date.now() - 7200000).toISOString() },
+      { id: 'ord-2', eventId: 'evt-fed-dec-cut', marketSlug: 'fed-cuts-rates-december-meeting', marketTitle: 'Fed cuts rates at December meeting?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'waterx', type: 'limit', side: 'buy', price: 0.72, amount: 400, filled: 0, status: 'open', createdAt: new Date(Date.now() - 14400000).toISOString() }
     ]
 
     this.userPositions = [
-      { id: 'pos-1', marketSlug: 'sui-above-5-end-q4', marketTitle: 'SUI above $5 by end of Q4?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'waterx', shares: 820, avgPrice: 0.585, currentPrice: 0.615, pnl: 24.60, returnPct: 5.1 },
-      { id: 'pos-2', marketSlug: 'lakers-vs-celtics-lakers-win', marketTitle: 'Lakers vs Celtics — Lakers win?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'opinion', shares: 500, avgPrice: 0.405, currentPrice: 0.428, pnl: 11.50, returnPct: 5.7 }
+      { id: 'pos-1', eventId: 'evt-sui-5', marketSlug: 'sui-above-5-end-q4', marketTitle: 'SUI above $5 by end of Q4?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'waterx', shares: 820, avgPrice: 0.585, currentPrice: 0.615, pnl: 24.60, returnPct: 5.1 },
+      { id: 'pos-2', eventId: 'evt-lakers-celtics', marketSlug: 'lakers-vs-celtics-lakers-win', marketTitle: 'Lakers vs Celtics — Lakers win?', outcomeId: 'yes', outcomeLabel: 'YES', venueId: 'deepbook', shares: 500, avgPrice: 0.405, currentPrice: 0.428, pnl: 11.50, returnPct: 5.7 }
     ]
 
     this.userTradesHistory = [
-      { id: 'uth-1', marketTitle: 'SUI above $5 by end of Q4?', outcomeId: 'yes', side: 'buy', mode: 'Agent (x402 · Sui)', venueId: 'waterx', shares: 820, price: 0.585, amount: 480, fee: 1.44, status: 'confirmed', txDigest: '0x99a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8', t: new Date(Date.now() - 3600000 * 5).toISOString() },
-      { id: 'uth-2', marketTitle: 'Lakers vs Celtics — Lakers win?', outcomeId: 'yes', side: 'buy', mode: 'Direct', venueId: 'opinion', shares: 500, price: 0.405, amount: 202.50, fee: 0.60, status: 'confirmed', txDigest: '0x11223344556677889900aabbccddeeff0011223344556677889900aabbccddeeff', t: new Date(Date.now() - 3600000 * 18).toISOString() }
+      { id: 'uth-1', marketTitle: 'SUI above $5 by end of Q4?', outcomeId: 'yes', side: 'buy', mode: 'Agent (x402 · Sui)', venueId: 'waterx', shares: 820, price: 0.585, amount: 480, fee: 1.44, status: 'filled', simulated: true, txDigest: null, ref: 'sim_seed_001', t: new Date(Date.now() - 3600000 * 5).toISOString() },
+      { id: 'uth-2', marketTitle: 'Lakers vs Celtics — Lakers win?', outcomeId: 'yes', side: 'buy', mode: 'Direct', venueId: 'deepbook', shares: 500, price: 0.405, amount: 202.50, fee: 0.60, status: 'filled', simulated: true, txDigest: null, ref: 'sim_seed_002', t: new Date(Date.now() - 3600000 * 18).toISOString() }
     ]
   }
 }

@@ -16,6 +16,8 @@ import {
 } from 'recharts'
 import { Panel, StatCard } from '../components/SharedUI'
 import { formatMoney } from '../lib/formatters'
+import LiveWalletPanel from '../components/wallets/LiveWalletPanel'
+import { useMyWallets } from '../lib/myWallets'
 import { useApp } from '../context/AppContext'
 
 export default function WalletDetailPage() {
@@ -23,6 +25,7 @@ export default function WalletDetailPage() {
   const [profile, setProfile] = useState<any>(null)
   const navigate = useNavigate()
   const { showToast } = useApp()
+  const myWallets = useMyWallets()
 
   useEffect(() => {
     if (!address) return
@@ -32,11 +35,33 @@ export default function WalletDetailPage() {
       .catch(console.error)
   }, [address])
 
+  if (profile?.error) {
+    return (
+      <div className="p-xl text-center font-mono text-xs text-quaternary space-y-sm">
+        <p>Wallet not found. Paste a Sui address on the Wallets page to look it up live.</p>
+        <button onClick={() => navigate('/wallets')} className="text-brand-primary hover:underline">Back to wallets</button>
+      </div>
+    )
+  }
   if (!profile || !profile.wallet) {
     return <div className="p-xl text-center font-mono text-xs text-quaternary">Loading wallet profile...</div>
   }
 
-  const { wallet, isFollowed, trades } = profile
+  const { wallet, isFollowed, kind } = profile
+  const isTracked = kind === 'tracked'
+  const isSui = wallet.chain === 'Sui'
+  const mine = myWallets.wallets.find(w => w.address.toLowerCase() === wallet.address.toLowerCase())
+  const title = mine?.label || wallet.label || (isTracked ? 'Forecaster Profile' : 'Sui wallet')
+
+  const toggleMine = () => {
+    if (mine) {
+      myWallets.remove(mine.address)
+      showToast('Removed from My wallets')
+      return
+    }
+    const problem = myWallets.add(wallet.address, wallet.label ?? '')
+    showToast(problem ?? 'Added to My wallets')
+  }
 
   const handleToggleFollow = async () => {
     try {
@@ -59,7 +84,7 @@ export default function WalletDetailPage() {
 
   return (
     <div className="space-y-md">
-      <div className="flex items-center justify-between bg-primary border border-secondary p-xl rounded-xl shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-md bg-primary border border-secondary p-md md:p-xl rounded-xl shadow-xs">
         <div className="flex items-center gap-md">
           <button
             onClick={() => navigate('/wallets')}
@@ -73,26 +98,46 @@ export default function WalletDetailPage() {
               <span className="text-[10px] px-xs rounded bg-utility-brand-50 text-utility-brand-700 font-mono font-bold">
                 {wallet.chain.toUpperCase()}
               </span>
-              <span className="text-xs font-mono text-quaternary">{wallet.address}</span>
+              <span className="text-xs font-mono text-quaternary break-all">{wallet.address}</span>
             </div>
             <h2 className="text-heading-xs font-bold text-primary mt-xxs">
-              {wallet.label || 'Forecaster Profile'}
+              {title}
             </h2>
           </div>
         </div>
 
-        <button
-          onClick={handleToggleFollow}
-          className={`inline-flex items-center gap-sm rounded-lg px-lg py-sm text-sm font-semibold transition-colors ${
-            isFollowed
-              ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-              : 'bg-primary border border-primary text-secondary hover:bg-secondary-hover'
-          }`}
-        >
-          {isFollowed ? 'Following' : '+ Follow Forecaster'}
-        </button>
+        <div className="flex flex-wrap items-center gap-sm">
+          {isSui && (
+            <button
+              onClick={toggleMine}
+              className={`inline-flex items-center gap-sm rounded-lg px-lg py-sm text-sm font-semibold transition-colors border ${
+                mine
+                  ? 'border-utility-success-200 bg-utility-success-50 text-utility-success-700'
+                  : 'border-primary bg-primary text-secondary hover:bg-secondary-hover'
+              }`}
+            >
+              {mine ? 'In My wallets' : '+ Add to My wallets'}
+            </button>
+          )}
+          {isTracked && (
+          <button
+            onClick={handleToggleFollow}
+            className={`inline-flex items-center gap-sm rounded-lg px-lg py-sm text-sm font-semibold transition-colors ${
+              isFollowed
+                ? 'bg-brand-solid text-primary-on-brand shadow-xs'
+                : 'bg-primary border border-primary text-secondary hover:bg-secondary-hover'
+            }`}
+          >
+            {isFollowed ? 'Following' : '+ Follow Forecaster'}
+          </button>
+          )}
+        </div>
       </div>
 
+      {isSui && <LiveWalletPanel address={wallet.address} />}
+
+      {isTracked && (
+      <>
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-sm">
         <StatCard label="Credibility Score" value={wallet.credibilityScore} subtext="Brier calibrated" />
@@ -170,6 +215,8 @@ export default function WalletDetailPage() {
           </table>
         </div>
       </Panel>
+      </>
+      )}
     </div>
   )
 }

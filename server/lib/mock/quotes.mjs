@@ -37,10 +37,16 @@ export function generateMockQuotes() {
   }
 
   // Pre-assign listing venues per event (3 to 6 venues)
+  // Sui-native markets must be tradable on Sui venues; seeded positions and orders rely on these.
+  const PINNED_VENUES = { 'evt-sui-5': ['waterx', 'deepbook'], 'evt-fed-dec-cut': ['waterx'] }
   const eventVenuesMap = {}
   for (const event of MOCK_EVENTS) {
     const venueCount = 3 + Math.floor(rng() * 4)
-    eventVenuesMap[event.id] = [...VENUES].sort(() => rng() - 0.5).slice(0, venueCount)
+    const listing = [...VENUES].sort(() => rng() - 0.5).slice(0, venueCount)
+    for (const id of PINNED_VENUES[event.id] ?? []) {
+      if (!listing.some(v => v.id === id)) listing.push(VENUES.find(v => v.id === id))
+    }
+    eventVenuesMap[event.id] = listing
   }
 
   for (const event of MOCK_EVENTS) {

@@ -1,373 +1,353 @@
-import React, { useState, useEffect } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Search, Activity } from 'lucide-react'
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
+import { Panel } from '../components/SharedUI'
+import AgentVault from '../components/trade/AgentVault'
+import OrderTicket from '../components/trade/OrderTicket'
+import TradeTables from '../components/trade/TradeTables'
+import LiveOddsPanel, { LiveMarketDetail } from '../components/trade/LiveOddsPanel'
 import {
-  Zap,
-  Shield,
-  Layers,
-  ArrowRight,
-  TrendingUp,
-  AlertCircle,
-  CheckCircle2,
-  ExternalLink,
-  ChevronDown,
-  Clock,
-  RotateCcw
-} from 'lucide-react'
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  AreaChart,
-  Area
-} from 'recharts'
-import { Panel, StatCard, VenuePill } from '../components/SharedUI'
+  AgentWallet,
+  OpenOrder,
+  Position,
+  TicketState,
+  TradeRecord,
+  apiJson,
+  cents
+} from '../components/trade/types'
 import { VENUE_MAP } from '../lib/config/venues'
-import { formatMoney, formatTimeAgo } from '../lib/formatters'
-import { useApp } from '../context/AppContext'
+import SuiWalletScope from '../components/SuiWalletScope'
 
-export default function TradePage() {
+interface MarketSummary {
+  id: string
+  slug: string
+  title: string
+  category: string
+  outcomes: { id: string; label: string }[]
+  venues: { id: string; name: string }[]
+  outcomePrices: Record<string, number | null>
+  underlying: string | null
+  live?: boolean
+}
+
+interface LiveList {
+  waterx: { id: string; slug: string; title: string; category: string; volumeUsd: number; preview: { id: string; label: string; price: number }[] }[]
+  deepbook: LiveMarketDetail[]
+  errors: { waterx: string | null; deepbook: string | null }
+}
+
+const isLiveId = (id: string | null) => Boolean(id && (id.startsWith('wx:') || id.startsWith('dbp:')))
+
+function liveSummary(m: LiveMarketDetail | LiveList['waterx'][number], venueId: 'waterx' | 'deepbook'): MarketSummary {
+  const outcomes = 'outcomes' in m ? m.outcomes.map(o => ({ id: o.id, label: o.label })) : m.preview.map(o => ({ id: o.id, label: o.label }))
+  const prices = 'outcomes' in m
+    ? Object.fromEntries(m.outcomes.map(o => [o.id, o.ask]))
+    : Object.fromEntries(m.preview.map(o => [o.id, o.price]))
+  return {
+    id: m.id,
+    slug: m.slug,
+    title: m.title,
+    category: m.category,
+    outcomes,
+    venues: [{ id: venueId, name: venueId === 'deepbook' ? 'DeepBook Predict' : 'WaterX' }],
+    outcomePrices: prices,
+    underlying: venueId === 'deepbook' ? 'BTC' : null,
+    live: true
+  }
+}
+
+interface LivePrices {
+  fetchedAt: string
+  prices: Record<string, { price: number; pool: string }>
+}
+
+const CATEGORIES = ['all', 'crypto', 'sports', 'politics', 'macro', 'culture']
+
+function TradeWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const { showToast } = useApp()
+  const marketParam = searchParams.get('market')
+  const outcomeParam = searchParams.get('outcome')
+  const isLive = isLiveId(marketParam)
 
-  // Markets list
-  const [markets, setMarkets] = useState<any[]>([])
-  const [selectedMarketSlug, setSelectedMarketSlug] = useState<string>(
-    searchParams.get('market') || 'btc-above-150k-dec-31'
-  )
-  const [selectedOutcomeId, setSelectedOutcomeId] = useState<string>(
-    searchParams.get('outcome') || 'yes'
-  )
-
-  // Order Ticket State
-  const [side, setSide] = useState<'buy' | 'sell'>('buy')
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
-  const [amount, setAmount] = useState<string>('100')
-  const [limitPrice, setLimitPrice] = useState<string>('0.50')
-  const [splitAcrossVenues, setSplitAcrossVenues] = useState<boolean>(false)
-  const [execMode, setExecMode] = useState<'direct' | 'agent'>('agent')
-
-  // Smart routing quote result
-  const [quote, setQuote] = useState<any>(null)
-  const [quoteLoading, setQuoteLoading] = useState(false)
-  const [quoteError, setQuoteError] = useState<string | null>(null)
-
-  // Execution status
-  const [executionStatus, setExecutionStatus] = useState<any>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [confirmModalOpen, setConfirmModalOpen] = useState(false)
-
-  // Agent Wallet & Rules State
-  const [agentWallet, setAgentWallet] = useState<any>(null)
-  const [agentRulesOpen, setAgentRulesOpen] = useState(false)
-  const [depositModalOpen, setDepositModalOpen] = useState(false)
-  const [depositAmt, setDepositAmt] = useState('500')
-
-  // Bottom Tabs: Open Orders, Positions, Trade History
-  const [bottomTab, setBottomTab] = useState<'orders' | 'positions' | 'history'>('positions')
-  const [orders, setOrders] = useState<any[]>([])
-  const [positions, setPositions] = useState<any[]>([])
-  const [history, setHistory] = useState<any[]>([])
-
-  // Market Order Book and History for center panel
+  const [markets, setMarkets] = useState<MarketSummary[]>([])
+  const [listSource, setListSource] = useState<'live' | 'demo'>(marketParam && !isLive ? 'demo' : 'live')
+  const [liveList, setLiveList] = useState<LiveList | null>(null)
+  const [liveDetail, setLiveDetail] = useState<LiveMarketDetail | null>(null)
+  const [liveError, setLiveError] = useState<string | null>(null)
+  const [livePrices, setLivePrices] = useState<LivePrices | null>(null)
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('all')
+  const [historyPoints, setHistoryPoints] = useState<Record<string, any>[]>([])
+  const [bookVenue, setBookVenue] = useState<string | null>(null)
   const [orderBook, setOrderBook] = useState<any>(null)
-  const [historyPoints, setHistoryPoints] = useState<any[]>([])
-  const [selectedVenue, setSelectedVenue] = useState<string>('deepbook')
 
-  // Load markets
+  const [agentWallet, setAgentWallet] = useState<AgentWallet | null>(null)
+  const [positions, setPositions] = useState<Position[]>([])
+  const [orders, setOrders] = useState<OpenOrder[]>([])
+  const [history, setHistory] = useState<TradeRecord[]>([])
+
+  const [ticket, setTicket] = useState<TicketState>({
+    side: 'buy',
+    type: 'market',
+    amount: '100',
+    limitPrice: '0.50',
+    split: false,
+    mode: 'direct'
+  })
+  const ticketRef = useRef<HTMLDivElement>(null)
+
+  const liveListItem = isLive
+    ? liveList?.deepbook.find(m => m.id === marketParam) ?? liveList?.waterx.find(m => m.id === marketParam)
+    : null
+  const market = isLive
+    ? liveDetail?.id === marketParam
+      ? liveSummary(liveDetail, liveDetail.venueId)
+      : liveListItem
+      ? liveSummary(liveListItem, marketParam!.startsWith('dbp:') ? 'deepbook' : 'waterx')
+      : undefined
+    : markets.find(m => m.slug === marketParam || m.id === marketParam)
+  const outcomeId = market?.outcomes.some(o => o.id === outcomeParam) ? outcomeParam! : market?.outcomes[0]?.id
+  const outcome = market?.outcomes.find(o => o.id === outcomeId)
+
+  const selectMarket = (slug: string, outcome?: string) =>
+    setSearchParams(outcome ? { market: slug, outcome } : { market: slug }, { replace: true })
+
   useEffect(() => {
-    fetch('/api/markets')
-      .then(r => r.json())
-      .then(m => {
-        setMarkets(Array.isArray(m) ? m : [])
-        if (!selectedMarketSlug && m.length > 0) {
-          setSelectedMarketSlug(m[0].slug || m[0].id)
-        }
-      })
-      .catch(console.error)
+    apiJson<MarketSummary[]>('/api/trade/markets').then(setMarkets).catch(() => setMarkets([]))
   }, [])
 
-  // Load agent wallet state & bottom tables
-  const reloadUserData = () => {
-    fetch('/api/agent').then(r => r.json()).then(setAgentWallet).catch(() => {})
-    fetch('/api/trade/orders').then(r => r.json()).then(o => setOrders(Array.isArray(o) ? o : [])).catch(() => {})
-    fetch('/api/trade/positions').then(r => r.json()).then(p => setPositions(Array.isArray(p) ? p : [])).catch(() => {})
-    fetch('/api/trade/history').then(r => r.json()).then(h => setHistory(Array.isArray(h) ? h : [])).catch(() => {})
-  }
-
+  // DeepBook Predict windows roll every few minutes, so the live board refreshes often.
   useEffect(() => {
-    reloadUserData()
+    const load = () => apiJson<LiveList>('/api/trade/live-markets').then(setLiveList).catch(() => {})
+    load()
+    const timer = window.setInterval(load, 20_000)
+    return () => window.clearInterval(timer)
   }, [])
 
-  const currentMarket = markets.find(m => m.slug === selectedMarketSlug || m.id === selectedMarketSlug)
-
-  // Fetch quote whenever parameters change
   useEffect(() => {
-    if (!currentMarket) return
-    setQuoteLoading(true)
-    setQuoteError(null)
+    if (marketParam) return
+    if (listSource === 'demo' && markets.length) selectMarket(markets[0].slug)
+    if (listSource === 'live' && liveList) {
+      const first = liveList.waterx[0] ?? liveList.deepbook[liveList.deepbook.length - 1]
+      if (first) selectMarket(first.id)
+      else if (markets.length) setListSource('demo')
+    }
+  }, [marketParam, listSource, liveList, markets])
 
-    const url = `/api/trade/quote?market=${currentMarket.id}&outcome=${selectedOutcomeId}&side=${side}&amount=${amount}&type=${orderType}&limitPrice=${limitPrice}&split=${splitAcrossVenues}`
-    fetch(url)
-      .then(r => {
-        if (!r.ok) return r.json().then(e => { throw new Error(e.error) })
-        return r.json()
-      })
-      .then(d => {
-        setQuote(d)
-        setQuoteLoading(false)
-      })
-      .catch(err => {
-        setQuoteError(err.message)
-        setQuoteLoading(false)
-      })
-  }, [selectedMarketSlug, selectedOutcomeId, side, orderType, amount, limitPrice, splitAcrossVenues, currentMarket])
-
-  // Fetch center panel chart & orderbook
   useEffect(() => {
-    if (!currentMarket) return
-    const eventId = currentMarket.id
+    if (!isLive || !marketParam) {
+      setLiveDetail(null)
+      setLiveError(null)
+      return
+    }
+    let cancelled = false
+    const load = () =>
+      apiJson<LiveMarketDetail>(`/api/trade/live-markets/${encodeURIComponent(marketParam)}`)
+        .then(d => {
+          if (cancelled) return
+          setLiveDetail(d)
+          setLiveError(null)
+        })
+        .catch(err => {
+          if (cancelled) return
+          setLiveError(err.message)
+          // A closed DeepBook window never reopens; stop polling it.
+          if (marketParam.startsWith('dbp:')) window.clearInterval(timer)
+        })
+    setLiveDetail(null)
+    setLiveError(null)
+    const timer = window.setInterval(load, marketParam.startsWith('dbp:') ? 10_000 : 30_000)
+    load()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [isLive, marketParam])
 
-    fetch(`/api/markets/${eventId}/history?outcomeId=${selectedOutcomeId}&range=24H`)
-      .then(r => r.json())
+  useEffect(() => {
+    const load = () => apiJson<LivePrices>('/api/live/prices').then(setLivePrices).catch(() => {})
+    load()
+    const timer = window.setInterval(load, 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const reloadUserData = useCallback(() => {
+    apiJson<AgentWallet>('/api/agent').then(setAgentWallet).catch(() => {})
+    apiJson<OpenOrder[]>('/api/trade/orders').then(setOrders).catch(() => {})
+    apiJson<Position[]>('/api/trade/positions').then(setPositions).catch(() => {})
+    apiJson<TradeRecord[]>('/api/trade/history').then(setHistory).catch(() => {})
+  }, [])
+
+  useEffect(reloadUserData, [reloadUserData])
+
+  const listingVenues = market?.venues ?? []
+
+  useEffect(() => {
+    if (!listingVenues.length) return
+    if (!bookVenue || !listingVenues.some(v => v.id === bookVenue)) setBookVenue(listingVenues[0].id)
+  }, [listingVenues, bookVenue])
+
+  useEffect(() => {
+    if (!market || !outcomeId || market.live) return
+    apiJson<Record<string, any>[]>(`/api/markets/${market.id}/history?outcomeId=${outcomeId}&range=24H`)
       .then(pts => setHistoryPoints(Array.isArray(pts) ? pts : []))
-      .catch(console.error)
+      .catch(() => setHistoryPoints([]))
+  }, [market?.id, outcomeId])
 
-    fetch(`/api/markets/${eventId}/orderbook?outcomeId=${selectedOutcomeId}&venueId=${selectedVenue}`)
-      .then(r => r.json())
-      .then(obRes => setOrderBook(obRes.orderBook))
-      .catch(console.error)
-  }, [currentMarket, selectedOutcomeId, selectedVenue])
+  useEffect(() => {
+    if (!market || !outcomeId || !bookVenue || market.live) return
+    apiJson<any>(`/api/markets/${market.id}/orderbook?outcomeId=${outcomeId}&venueId=${bookVenue}`)
+      .then(res => setOrderBook(res.orderBook))
+      .catch(() => setOrderBook(null))
+  }, [market?.id, outcomeId, bookVenue])
 
-  // Execute trade
-  const handleConfirmTrade = async () => {
-    if (!quote || !quote.bestRoute) return
-    setIsSubmitting(true)
-    setConfirmModalOpen(false)
+  const outcomePrices = market?.outcomePrices ?? {}
+  const underlying = market?.underlying ? livePrices?.prices[market.underlying] : null
 
-    try {
-      if (execMode === 'agent') {
-        // Agent mode x402
-        const res = await fetch('/api/execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventId: currentMarket.id,
-            venueId: quote.bestRoute.venueId,
-            outcomeId: selectedOutcomeId,
-            side,
-            amount: parseFloat(amount)
-          })
-        }).then(r => {
-          if (!r.ok) return r.json().then(e => { throw new Error(e.error) })
-          return r.json()
-        })
+  const chartVenues = useMemo(
+    () => Object.keys(historyPoints[0] ?? {}).filter(k => listingVenues.some(v => v.id === k)),
+    [historyPoints, listingVenues]
+  )
 
-        setExecutionStatus({
-          id: res.id,
-          status: 'pending',
-          mode: 'Agent (x402 · Sui)',
-          venue: quote.bestRoute.venueName,
-          amount: parseFloat(amount),
-          shares: quote.totalShares
-        })
-        showToast('Autonomous Agent Trade Dispatched on Sui')
-
-        // Poll confirmation
-        const timer = setInterval(async () => {
-          const check = await fetch(`/api/execute/${res.id}`).then(r => r.json())
-          if (check.status === 'confirmed') {
-            clearInterval(timer)
-            setIsSubmitting(false)
-            setExecutionStatus((prev: any) => ({ ...prev, status: 'confirmed', txDigest: check.txDigest }))
-            showToast(`Agent Confirmed: Tx ${check.txDigest.slice(0, 10)}...`)
-            reloadUserData()
-          }
-        }, 1000)
-      } else {
-        // Direct Mode
-        const res = await fetch('/api/trade/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            marketTitle: currentMarket.title,
-            outcomeId: selectedOutcomeId,
-            venueId: quote.bestRoute.venueId,
-            side,
-            amount: parseFloat(amount),
-            price: quote.avgFillPrice,
-            shares: quote.totalShares
-          })
-        }).then(r => r.json())
-
-        setIsSubmitting(false)
-        setExecutionStatus({
-          status: 'confirmed',
-          mode: 'Direct (User Signed)',
-          venue: quote.bestRoute.venueName,
-          amount: parseFloat(amount),
-          shares: quote.totalShares,
-          txDigest: res.txDigest
-        })
-        showToast('Direct Move Call Confirmed on Sui')
-        reloadUserData()
-      }
-    } catch (err: any) {
-      setIsSubmitting(false)
-      showToast(`Trade Failed: ${err.message}`)
-      setExecutionStatus({ status: 'failed', reason: err.message })
-    }
+  const matchesFilter = (m: { title: string; category: string }) =>
+    (category === 'all' || m.category === category) && m.title.toLowerCase().includes(search.trim().toLowerCase())
+  const filteredMarkets = markets.filter(matchesFilter)
+  const liveGroups = [
+    { key: 'deepbook', label: 'DeepBook Predict · BTC up/down', items: (liveList?.deepbook ?? []).filter(matchesFilter).map(m => liveSummary(m, 'deepbook')), error: liveList?.errors.deepbook },
+    { key: 'waterx', label: 'WaterX', items: (liveList?.waterx ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: liveList?.errors.waterx }
+  ]
+  const nextDeepbookWindow = () => {
+    // Windows are sorted soonest-first; the last one leaves the most time to trade.
+    const others = (liveList?.deepbook ?? []).filter(m => m.id !== marketParam)
+    const next = others[others.length - 1]
+    if (next) selectMarket(next.id)
   }
 
-  // Handle agent deposit
-  const handleAgentDeposit = async () => {
-    try {
-      await fetch('/api/agent/deposit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: parseFloat(depositAmt) || 500 })
-      })
-      showToast('Agent Vault Re-funded')
-      setDepositModalOpen(false)
-      reloadUserData()
-    } catch (e) {
-      console.error(e)
-    }
+  const renderMarketRow = (m: MarketSummary) => {
+    const selected = m.id === market?.id
+    const lead = m.outcomes[0]
+    return (
+      <button
+        key={m.id}
+        onClick={() => selectMarket(m.slug)}
+        aria-current={selected}
+        className={`w-full text-left p-sm transition-colors ${selected ? 'bg-secondary' : 'hover:bg-secondary-hover'}`}
+      >
+        <div className="flex items-center justify-between gap-sm text-[10px] text-quaternary uppercase mb-xxs">
+          <span className="truncate">{m.live && lead ? lead.label : m.category}</span>
+          <span className="font-mono text-primary font-bold">{cents(lead ? m.outcomePrices[lead.id] : null)}</span>
+        </div>
+        <div className={`text-xs text-primary leading-snug line-clamp-2 ${selected ? 'font-semibold' : ''}`}>{m.title}</div>
+        {!m.live && <div className="mt-xxs text-[10px] text-quaternary font-mono">{m.venues.map(v => v.name).join(' · ')}</div>}
+      </button>
+    )
   }
 
-  // Quick amount chips
-  const quickChips = [10, 50, 100, 500]
+  const closePosition = (p: Position) => {
+    selectMarket(p.marketSlug, p.outcomeId)
+    setTicket(t => ({
+      ...t,
+      side: 'sell',
+      type: 'market',
+      amount: String(Math.max(1, Math.floor(p.shares * p.currentPrice)))
+    }))
+    ticketRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
-    <div className="space-y-md">
-      {/* Agent Wallet Top Bar (Collapsible) */}
-      <div className="bg-primary border border-secondary rounded-xl p-md shadow-xs flex flex-wrap items-center justify-between gap-md">
-        <div className="flex items-center gap-md">
-          <div className="p-xs bg-utility-brand-50 border border-utility-brand-200 rounded-lg text-brand-primary">
-            <Zap className="size-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-xs">
-              <span className="text-xs font-bold text-primary">Autonomous Sui Agent Vault (x402)</span>
-              <span className="text-[10px] px-xs rounded bg-utility-success-50 text-utility-success-700 font-mono font-bold">
-                ACTIVE
-              </span>
-            </div>
-            <div className="text-xs font-mono text-quaternary truncate max-w-sm">
-              {agentWallet?.address || '0x3a7e...c89f'} (Sui Mainnet)
-            </div>
-          </div>
-        </div>
+    <div className="space-y-md pb-24 lg:pb-0">
+      <AgentVault wallet={agentWallet} onChange={reloadUserData} />
 
-        <div className="flex items-center gap-lg">
-          <div className="text-right font-mono text-xs">
-            <div className="text-quaternary">Vault Balance:</div>
-            <div className="text-primary font-bold">
-              ${agentWallet?.balanceUSDC?.toFixed(2) || '2,450.00'} USDC · {agentWallet?.balanceSUI || '128.5'} SUI
-            </div>
-          </div>
-          <div className="text-right font-mono text-xs">
-            <div className="text-quaternary">Today's Spend:</div>
-            <div className="text-utility-warning-700 font-bold">
-              ${agentWallet?.spentToday || '1,350'} / ${agentWallet?.dailyBudget || '5,000'}
-            </div>
-          </div>
-          <div className="flex items-center gap-xs">
-            <button
-              onClick={() => setDepositModalOpen(true)}
-              className="px-md py-xs bg-brand-solid text-primary-on-brand font-bold text-xs rounded-lg hover:bg-brand-solid-hover shadow-xs"
-            >
-              + Deposit
-            </button>
-            <button
-              onClick={() => setAgentRulesOpen(!agentRulesOpen)}
-              className="px-md py-xs bg-secondary border border-secondary text-primary font-bold text-xs rounded-lg hover:bg-secondary-hover"
-            >
-              Rules
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Agent Rules Collapsible Panel */}
-      {agentRulesOpen && (
-        <div className="p-md bg-secondary border border-secondary rounded-xl text-xs font-mono space-y-sm animate-in fade-in">
-          <div className="flex items-center justify-between font-bold text-primary">
-            <span>Autonomous Risk Parameters</span>
-            <span className="text-utility-success-700">Auto-Arbitrage Active</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-sm">
-            <div className="p-xs bg-primary rounded border border-secondary">
-              <span className="text-quaternary block">Max per Trade:</span>
-              <span className="font-bold text-primary">${agentWallet?.rules?.maxPerTrade || '1,000'}</span>
-            </div>
-            <div className="p-xs bg-primary rounded border border-secondary">
-              <span className="text-quaternary block">Daily Budget:</span>
-              <span className="font-bold text-primary">${agentWallet?.rules?.dailyBudget || '5,000'}</span>
-            </div>
-            <div className="p-xs bg-primary rounded border border-secondary">
-              <span className="text-quaternary block">Allowed Venues:</span>
-              <span className="font-bold text-primary">WaterX, DeepBook (Sui)</span>
-            </div>
-            <div className="p-xs bg-primary rounded border border-secondary">
-              <span className="text-quaternary block">Auto-Arb Min Spread:</span>
-              <span className="font-bold text-utility-warning-700">≥ 6.0pp</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 3-Column Trading Workspace Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-md">
-        {/* Left Column (3 cols): Market Picker & Outcomes */}
         <div className="lg:col-span-3 space-y-md">
-          <Panel title="Market Selector" badge="14 ACTIVE" noPadding>
-            <div className="divide-y divide-secondary max-h-[500px] overflow-y-auto">
-              {markets.map(m => {
-                const isSelected = m.slug === selectedMarketSlug || m.id === selectedMarketSlug
-                return (
+          <Panel title="Sui markets" badge="WaterX · DeepBook" noPadding>
+            <div className="p-sm space-y-xs border-b border-secondary">
+              <div className="grid grid-cols-2 gap-xxs bg-secondary p-xxs rounded-lg border border-secondary" role="tablist" aria-label="Market source">
+                {(['live', 'demo'] as const).map(src => (
                   <button
-                    key={m.id}
-                    onClick={() => {
-                      setSelectedMarketSlug(m.slug || m.id)
-                      setSelectedOutcomeId(m.outcomes[0].id)
-                    }}
-                    className={`w-full text-left p-sm transition-colors flex flex-col justify-between ${
-                      isSelected ? 'bg-secondary font-semibold' : 'hover:bg-secondary-hover'
+                    key={src}
+                    role="tab"
+                    aria-selected={listSource === src}
+                    onClick={() => setListSource(src)}
+                    className={`py-xxs rounded text-[11px] font-bold ${
+                      listSource === src ? 'bg-brand-solid text-primary-on-brand' : 'text-quaternary hover:text-primary'
                     }`}
                   >
-                    <div className="flex items-center justify-between text-[10px] text-quaternary uppercase mb-xxs">
-                      <span>{m.category}</span>
-                      <span className="font-mono text-primary font-bold">
-                        {(m.consensus * 100).toFixed(1)}¢
-                      </span>
-                    </div>
-                    <div className="text-xs text-primary leading-snug line-clamp-2">{m.title}</div>
+                    {src === 'live' ? `Live (${(liveList?.deepbook.length ?? 0) + (liveList?.waterx.length ?? 0)})` : `Demo (${markets.length})`}
                   </button>
-                )
-              })}
+                ))}
+              </div>
+              <label className="flex items-center gap-xs rounded-md border border-primary bg-primary px-sm py-xxs">
+                <Search className="size-3.5 text-quaternary" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search markets"
+                  aria-label="Search markets"
+                  className="w-full bg-transparent text-xs text-primary py-xxs focus:outline-none"
+                />
+              </label>
+              <div className="flex flex-wrap gap-xxs">
+                {CATEGORIES.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setCategory(c)}
+                    className={`px-sm py-xxs rounded text-[11px] capitalize ${
+                      category === c ? 'bg-brand-solid text-primary-on-brand font-bold' : 'bg-secondary text-quaternary hover:text-primary'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="divide-y divide-secondary max-h-64 lg:max-h-[460px] overflow-y-auto">
+              {listSource === 'demo' ? (
+                <>
+                  {filteredMarkets.length === 0 && <p className="p-md text-xs text-tertiary">No markets match that search.</p>}
+                  {filteredMarkets.map(renderMarketRow)}
+                </>
+              ) : !liveList ? (
+                <div className="p-sm space-y-xs">
+                  {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded bg-secondary animate-pulse" />)}
+                </div>
+              ) : (
+                liveGroups.map(g => (
+                  <div key={g.key}>
+                    <div className="sticky top-0 z-10 px-sm py-xxs bg-secondary text-[10px] uppercase font-semibold text-quaternary flex items-center justify-between">
+                      <span>{g.label}</span>
+                      <span className="font-mono">{g.items.length}</span>
+                    </div>
+                    {g.error && <p className="p-sm text-[11px] text-utility-warning-700">{g.error}</p>}
+                    {!g.error && g.items.length === 0 && (
+                      <p className="p-sm text-[11px] text-tertiary">
+                        {g.key === 'deepbook' ? 'No window open right now. A new one opens every few minutes.' : 'No markets match that search.'}
+                      </p>
+                    )}
+                    <div className="divide-y divide-secondary">{g.items.map(renderMarketRow)}</div>
+                  </div>
+                ))
+              )}
             </div>
           </Panel>
 
-          {/* Outcome Selector */}
-          {currentMarket && (
-            <Panel title="Outcome Selection" badge={currentMarket.outcomes.length > 2 ? 'MULTI' : 'BINARY'}>
+          {market && !market.live && (
+            <Panel title="Outcome" badge={market.outcomes.length > 2 ? 'Multi' : 'Binary'}>
               <div className="space-y-xs">
-                {currentMarket.outcomes.map((o: any) => (
+                {market.outcomes.map(o => (
                   <button
                     key={o.id}
-                    onClick={() => setSelectedOutcomeId(o.id)}
+                    onClick={() => selectMarket(market.slug, o.id)}
+                    aria-pressed={o.id === outcomeId}
                     className={`w-full flex items-center justify-between p-sm rounded-lg border text-xs font-mono transition-colors ${
-                      selectedOutcomeId === o.id
+                      o.id === outcomeId
                         ? 'border-brand bg-utility-brand-50 text-utility-brand-700 font-bold'
                         : 'border-secondary bg-secondary text-primary hover:bg-secondary-hover'
                     }`}
                   >
                     <span>{o.label}</span>
-                    <span>{(currentMarket.consensus * 100).toFixed(1)}¢</span>
+                    <span>{cents(outcomePrices[o.id])}</span>
                   </button>
                 ))}
               </div>
@@ -375,585 +355,156 @@ export default function TradePage() {
           )}
         </div>
 
-        {/* Center Column (5 cols): Live Chart & Order Book Depth */}
         <div className="lg:col-span-5 space-y-md">
-          {/* Price Chart with Venue Lines + Consensus */}
+          {market?.live ? (
+            <LiveOddsPanel
+              detail={liveDetail}
+              error={liveError}
+              selectedOutcomeId={outcomeId}
+              onSelectOutcome={id => selectMarket(market.slug, id)}
+              btcPrice={livePrices?.prices.BTC?.price ?? null}
+              onNextWindow={nextDeepbookWindow}
+            />
+          ) : (
+            <>
           <Panel
-            title={`Odds Trend — ${currentMarket?.title || ''}`}
-            badge="24H VWAP"
-            actions={
-              <span className="font-mono text-xs font-bold text-brand-primary">
-                {((quote?.consensusPrice || 0.5) * 100).toFixed(1)}¢
-              </span>
-            }
+            title={market ? `${market.title} — ${outcome?.label ?? ''}` : 'Odds'}
+            badge="24H"
+            actions={<span className="font-mono text-xs font-bold text-brand-primary">{cents(outcomeId ? outcomePrices[outcomeId] : null)}</span>}
           >
+            {market?.underlying && (
+              <div className="mb-sm flex flex-wrap items-center gap-xs text-[11px] font-mono text-quaternary">
+                <Activity className="size-3.5 text-utility-success-700" />
+                <span>Live {market.underlying}/USDC</span>
+                <span className="text-primary font-bold">
+                  {underlying ? `$${underlying.price.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—'}
+                </span>
+                <span>· DeepBook {underlying?.pool ?? ''}</span>
+              </div>
+            )}
             <div className="h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={historyPoints}>
-                  <XAxis dataKey="t" stroke="#5C6773" fontSize={10} tickFormatter={t => t.substring(11, 16)} />
-                  <YAxis domain={['auto', 'auto']} stroke="#5C6773" fontSize={10} unit="¢" />
-                  <Tooltip contentStyle={{ backgroundColor: '#0D1117', borderColor: '#1F2933', fontSize: '11px' }} />
-                  <Line type="monotone" dataKey="consensus" stroke="#22D3EE" strokeWidth={3} dot={false} name="Consensus" />
-                  <Line type="monotone" dataKey="waterx" stroke="#38BDF8" strokeWidth={1.5} dot={false} name="WaterX" />
-                  <Line type="monotone" dataKey="deepbook" stroke="#4ADE80" strokeWidth={1.5} dot={false} name="DeepBook" />
-                  <Line type="monotone" dataKey="polymarket" stroke="#2E5CFF" strokeWidth={1.5} dot={false} name="Polymarket" />
-                </LineChart>
-              </ResponsiveContainer>
+              {historyPoints.length === 0 ? (
+                <div className="h-full rounded bg-secondary animate-pulse" />
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historyPoints}>
+                    <XAxis dataKey="t" stroke="#5C6773" fontSize={10} tickFormatter={t => String(t).substring(11, 16)} />
+                    <YAxis domain={['auto', 'auto']} stroke="#5C6773" fontSize={10} width={40} tickFormatter={v => `${Math.round(v * 100)}¢`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0D1117', borderColor: '#1F2933', fontSize: '11px' }}
+                      labelFormatter={t => String(t).replace('T', ' ').slice(0, 16)}
+                      formatter={(v, name) => [cents(Number(v)), String(name)]}
+                    />
+                    {chartVenues.map(id => (
+                      <Line
+                        key={id}
+                        type="monotone"
+                        dataKey={id}
+                        name={VENUE_MAP.get(id)?.name ?? id}
+                        stroke={VENUE_MAP.get(id)?.color ?? '#888'}
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    ))}
+                    <Line type="monotone" dataKey="consensus" name="All-venue consensus" stroke="#22D3EE" strokeWidth={2} strokeDasharray="4 3" dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </Panel>
 
-          {/* Venue Order Book & Depth Ladder */}
           <Panel
-            title="Order Book Switcher"
-            badge="DEPTH"
+            title="Order book"
             actions={
               <select
-                value={selectedVenue}
-                onChange={e => setSelectedVenue(e.target.value)}
+                value={bookVenue ?? ''}
+                onChange={e => setBookVenue(e.target.value)}
+                aria-label="Order book venue"
                 className="bg-secondary border border-secondary rounded px-sm py-xxs text-xs font-mono text-primary focus:outline-none"
               >
-                <option value="waterx">WaterX (Sui AMM)</option>
-                <option value="deepbook">DeepBook (Sui Book)</option>
-                <option value="polymarket">Polymarket (Polygon)</option>
-                <option value="predictfun">Predict.fun (BNB)</option>
+                {listingVenues.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
               </select>
             }
             noPadding
           >
-            <div className="p-sm text-[11px] font-mono flex flex-col justify-between h-56">
-              <div className="space-y-0.5 overflow-hidden">
-                {orderBook?.asks?.slice(0, 4).reverse().map((a: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-utility-error-700 px-xs hover:bg-secondary">
-                    <span>{(a.price * 100).toFixed(1)}¢</span>
-                    <span className="text-quaternary">{a.size}</span>
-                    <span className="text-secondary">{a.total}</span>
-                  </div>
-                ))}
+            <div className="p-sm text-[11px] font-mono space-y-xs">
+              <div className="grid grid-cols-3 text-quaternary uppercase px-xs">
+                <span>Price</span>
+                <span className="text-right">Size</span>
+                <span className="text-right">Total</span>
               </div>
-
-              <div className="py-xxs px-xs bg-secondary border-y border-secondary text-center text-xs text-primary font-bold">
-                Mid: {((orderBook?.midPrice || 0.5) * 100).toFixed(1)}¢ · Spread: {orderBook?.spread || 0.008}
+              {(orderBook?.asks ?? []).slice(0, 5).reverse().map((a: any, i: number) => (
+                <div key={`a${i}`} className="grid grid-cols-3 text-utility-error-700 px-xs">
+                  <span>{cents(a.price)}</span>
+                  <span className="text-right text-quaternary">{a.size.toLocaleString('en-US')}</span>
+                  <span className="text-right text-secondary">{a.total.toLocaleString('en-US')}</span>
+                </div>
+              ))}
+              <div className="py-xxs px-xs bg-secondary border-y border-secondary text-center text-primary font-bold">
+                Mid {cents(orderBook?.midPrice)} · spread {orderBook ? `${(orderBook.spread * 100).toFixed(1)}¢` : '—'}
               </div>
-
-              <div className="space-y-0.5 overflow-hidden">
-                {orderBook?.bids?.slice(0, 4).map((b: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-utility-success-700 px-xs hover:bg-secondary">
-                    <span>{(b.price * 100).toFixed(1)}¢</span>
-                    <span className="text-quaternary">{b.size}</span>
-                    <span className="text-secondary">{b.total}</span>
-                  </div>
-                ))}
-              </div>
+              {(orderBook?.bids ?? []).slice(0, 5).map((b: any, i: number) => (
+                <div key={`b${i}`} className="grid grid-cols-3 text-utility-success-700 px-xs">
+                  <span>{cents(b.price)}</span>
+                  <span className="text-right text-quaternary">{b.size.toLocaleString('en-US')}</span>
+                  <span className="text-right text-secondary">{b.total.toLocaleString('en-US')}</span>
+                </div>
+              ))}
             </div>
           </Panel>
+            </>
+          )}
         </div>
 
-        {/* Right Column (4 cols): THE ORDER TICKET */}
-        <div className="lg:col-span-4 space-y-md">
-          <Panel title="Smart Order Ticket" badge={execMode === 'agent' ? 'AGENT x402' : 'DIRECT'}>
-            <div className="space-y-sm text-xs font-mono">
-              {/* Execution Mode Switch */}
-              <div className="grid grid-cols-2 gap-xs bg-secondary p-xxs rounded-lg border border-secondary">
-                <button
-                  onClick={() => setExecMode('agent')}
-                  className={`py-xs rounded text-xs font-bold transition-colors ${
-                    execMode === 'agent'
-                      ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                      : 'text-quaternary hover:text-primary'
-                  }`}
-                >
-                  Agent (x402 · Sui)
-                </button>
-                <button
-                  onClick={() => setExecMode('direct')}
-                  className={`py-xs rounded text-xs font-bold transition-colors ${
-                    execMode === 'direct'
-                      ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                      : 'text-quaternary hover:text-primary'
-                  }`}
-                >
-                  Direct (Sui Wallet)
-                </button>
-              </div>
-
-              {/* Side: Buy / Sell */}
-              <div className="grid grid-cols-2 gap-sm">
-                <button
-                  onClick={() => setSide('buy')}
-                  className={`inline-flex items-center justify-center rounded-lg px-lg py-sm text-sm font-semibold uppercase transition-colors focus-visible:ring-2 focus-visible:ring-focus-ring ${
-                    side === 'buy'
-                      ? 'border border-utility-success-200 bg-utility-success-50 text-utility-success-700 shadow-xs'
-                      : 'border border-primary bg-primary text-secondary hover:bg-secondary-hover'
-                  }`}
-                >
-                  BUY YES
-                </button>
-                <button
-                  onClick={() => setSide('sell')}
-                  className={`inline-flex items-center justify-center rounded-lg px-lg py-sm text-sm font-semibold uppercase transition-colors focus-visible:ring-2 focus-visible:ring-focus-ring ${
-                    side === 'sell'
-                      ? 'border border-utility-error-200 bg-utility-error-50 text-utility-error-700 shadow-xs'
-                      : 'border border-primary bg-primary text-secondary hover:bg-secondary-hover'
-                  }`}
-                >
-                  SELL NO
-                </button>
-              </div>
-
-              {/* Order Type: Market / Limit */}
-              <div className="flex items-center justify-between text-xs font-sans">
-                <span className="text-secondary font-medium">Order Type:</span>
-                <div className="flex items-center gap-xs">
-                  <button
-                    onClick={() => setOrderType('market')}
-                    className={`px-sm py-xxs rounded ${orderType === 'market' ? 'bg-brand-solid text-primary-on-brand font-bold' : 'bg-secondary text-quaternary'}`}
-                  >
-                    Market
-                  </button>
-                  <button
-                    onClick={() => setOrderType('limit')}
-                    className={`px-sm py-xxs rounded ${orderType === 'limit' ? 'bg-brand-solid text-primary-on-brand font-bold' : 'bg-secondary text-quaternary'}`}
-                  >
-                    Limit
-                  </button>
-                </div>
-              </div>
-
-              {/* Limit Price if active */}
-              {orderType === 'limit' && (
-                <div className="flex flex-col gap-sm">
-                  <label className="text-sm font-medium text-secondary">Limit Price ($0.01 - $0.99)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max="0.99"
-                    value={limitPrice}
-                    onChange={e => setLimitPrice(e.target.value)}
-                    className="rounded-md bg-primary px-lg py-sm text-sm text-primary placeholder:text-placeholder border border-primary focus-visible:ring-2 focus-visible:ring-focus-ring font-mono"
-                  />
-                </div>
-              )}
-
-              {/* Amount Input with Quick Chips */}
-              <div className="flex flex-col gap-sm">
-                <label className="text-sm font-medium text-secondary">Amount (USDC)</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  className="rounded-md bg-primary px-lg py-sm text-sm text-primary placeholder:text-placeholder border border-primary focus-visible:ring-2 focus-visible:ring-focus-ring font-mono"
-                />
-                <div className="flex items-center gap-xs">
-                  {quickChips.map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setAmount(c.toString())}
-                      className="inline-flex items-center rounded-lg bg-primary px-md py-xs text-xs font-semibold text-secondary border border-primary shadow-xs hover:bg-secondary-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-                    >
-                      ${c}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setAmount('1000')}
-                    className="inline-flex items-center rounded-lg bg-primary px-md py-xs text-xs font-semibold text-brand-primary border border-primary shadow-xs hover:bg-secondary-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-                  >
-                    Max
-                  </button>
-                </div>
-              </div>
-
-              {/* Split across venues toggle */}
-              <div className="flex items-center justify-between p-xs bg-secondary rounded border border-secondary">
-                <span className="text-primary font-sans text-xs">Split Across Venues (Deep Fill)</span>
-                <input
-                  type="checkbox"
-                  checked={splitAcrossVenues}
-                  onChange={e => setSplitAcrossVenues(e.target.checked)}
-                  className="accent-cyan-400 size-4"
-                />
-              </div>
-
-              {/* Smart Routing Table */}
-              {quote && (
-                <div className="space-y-xs">
-                  <div className="text-quaternary uppercase text-[11px] font-semibold">Available Venue Routes</div>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {quote.routes?.map((r: any) => {
-                      const isBest = quote.bestRoute?.venueId === r.venueId
-                      return (
-                        <div
-                          key={r.venueId}
-                          className={`p-xs rounded border text-[11px] flex items-center justify-between ${
-                            isBest ? 'border-brand bg-utility-brand-50 text-utility-brand-700 font-bold' : 'border-secondary bg-secondary text-primary'
-                          }`}
-                        >
-                          <div className="flex items-center gap-xs">
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: r.venueColor }} />
-                            <span>{r.venueName}</span>
-                            {isBest && <span className="text-[10px] text-brand-primary">(BEST)</span>}
-                          </div>
-                          <div>{(r.price * 100).toFixed(1)}¢ · {r.estimatedShares} sh</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Trade Preview Breakdown */}
-              {quote && (
-                <div className="p-xs bg-secondary rounded border border-secondary space-y-xxs text-[11px]">
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Avg Fill Price:</span>
-                    <span className="text-primary font-bold">{(quote.avgFillPrice * 100).toFixed(1)}¢</span>
-                  </div>
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Est. Shares:</span>
-                    <span className="text-primary font-bold">{quote.totalShares} Shares</span>
-                  </div>
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Max Payout:</span>
-                    <span className="text-utility-success-700 font-bold">${quote.maxPayout?.toFixed(2)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Potential Profit:</span>
-                    <span className="text-utility-success-700 font-bold">+${quote.potentialProfit?.toFixed(2)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Consensus Gap:</span>
-                    <span className={quote.consensusGapPp <= 0 ? 'text-utility-success-700' : 'text-utility-error-700'}>
-                      {quote.consensusGapPp <= 0 ? `${quote.consensusGapPp}pp under consensus` : `+${quote.consensusGapPp}pp over`}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-quaternary">
-                    <span>Fees &amp; Slippage:</span>
-                    <span className="text-primary">${quote.totalFees?.toFixed(2)} · {quote.slippagePct}%</span>
-                  </div>
-                </div>
-              )}
-
-              {quoteError && (
-                <div className="p-xs bg-utility-error-50 border border-utility-error-200 text-utility-error-700 rounded text-xs">
-                  {quoteError}
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <button
-                onClick={() => setConfirmModalOpen(true)}
-                disabled={isSubmitting || !quote}
-                className="w-full inline-flex items-center justify-center gap-sm rounded-lg border border-transparent bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand shadow-xs hover:bg-brand-solid-hover disabled:opacity-50"
-              >
-                <Zap className="size-4 shrink-0" />
-                <span>
-                  {isSubmitting
-                    ? 'Executing Order...'
-                    : execMode === 'agent'
-                    ? 'Execute Via Agent (x402)'
-                    : 'Sign & Submit (Direct Move)'}
-                </span>
-              </button>
-
-              {/* Status Card */}
-              {executionStatus && (
-                <div className="p-xs bg-primary border border-secondary rounded-lg text-xs font-mono space-y-xxs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-quaternary">Execution Result:</span>
-                    <span
-                      className={`font-bold ${
-                        executionStatus.status === 'confirmed'
-                          ? 'text-utility-success-700'
-                          : executionStatus.status === 'pending'
-                          ? 'text-utility-warning-700 animate-pulse'
-                          : 'text-utility-error-700'
-                      }`}
-                    >
-                      {executionStatus.status.toUpperCase()}
-                    </span>
-                  </div>
-                  {executionStatus.txDigest && (
-                    <div className="text-[11px] text-quaternary flex items-center justify-between">
-                      <span className="truncate max-w-[180px]">Digest: {executionStatus.txDigest}</span>
-                      <a
-                        href={`https://suiscan.xyz/mainnet/tx/${executionStatus.txDigest}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-brand-primary hover:underline inline-flex items-center gap-xxs"
-                      >
-                        <span>Suiscan</span>
-                        <ExternalLink className="size-3" />
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </Panel>
+        <div className="lg:col-span-4 scroll-mt-md" ref={ticketRef}>
+          {market && outcomeId && outcome ? (
+            <OrderTicket
+              market={market}
+              outcomeId={outcomeId}
+              outcomeLabel={outcome.label}
+              ticket={ticket}
+              setTicket={setTicket}
+              agentWallet={agentWallet}
+              onExecuted={reloadUserData}
+              live={Boolean(market.live)}
+              priceVersion={liveError ?? liveDetail?.fetchedAt}
+            />
+          ) : (
+            <div className="h-96 rounded-xl border border-secondary bg-secondary animate-pulse" />
+          )}
         </div>
       </div>
 
-      {/* Confirmation Dialog (dialog.md) */}
-      {confirmModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-md">
-          <div className="fixed inset-0 bg-overlay opacity-70" onClick={() => setConfirmModalOpen(false)}></div>
-          <div className="relative flex max-h-full w-full max-w-md flex-col overflow-hidden rounded-lg bg-primary shadow-2xl border border-secondary">
-            <header className="flex items-center justify-between border-b border-secondary p-xl">
-              <h2 className="text-lg font-semibold text-primary">Confirm Trade Order</h2>
-            </header>
-            <div className="p-xl space-y-sm text-xs font-mono">
-              <div className="p-sm bg-secondary rounded border border-secondary space-y-xxs">
-                <div className="flex justify-between text-quaternary">
-                  <span>Market:</span>
-                  <span className="text-primary font-bold">{currentMarket?.title}</span>
-                </div>
-                <div className="flex justify-between text-quaternary">
-                  <span>Side &amp; Outcome:</span>
-                  <span className="text-utility-success-700 font-bold">
-                    {side.toUpperCase()} {selectedOutcomeId.toUpperCase()}
-                  </span>
-                </div>
-                <div className="flex justify-between text-quaternary">
-                  <span>Amount:</span>
-                  <span className="text-primary font-bold">${amount} USDC</span>
-                </div>
-                <div className="flex justify-between text-quaternary">
-                  <span>Best Route:</span>
-                  <span className="text-brand-primary font-bold">{quote?.bestRoute?.venueName}</span>
-                </div>
-                <div className="flex justify-between text-quaternary">
-                  <span>Mode:</span>
-                  <span className="text-primary font-bold">
-                    {execMode === 'agent' ? 'Autonomous Sui Agent (x402)' : 'Direct Sui Wallet Move Call'}
-                  </span>
-                </div>
-              </div>
+      <TradeTables positions={positions} orders={orders} history={history} onClosePosition={closePosition} onChange={reloadUserData} />
+
+      {market && outcome && (
+        <div className="lg:hidden fixed left-0 right-0 bottom-14 md:bottom-0 z-30 border-t border-secondary bg-primary px-md py-sm flex items-center justify-between gap-sm">
+          <div className="min-w-0 flex-1 text-xs">
+            <div className="truncate text-primary font-semibold">{market.title}</div>
+            <div className="font-mono text-quaternary">
+              {outcome.label} · {cents(outcomePrices[outcome.id])}
             </div>
-            <footer className="flex justify-end gap-sm border-t border-secondary p-xl">
-              <button
-                onClick={() => setConfirmModalOpen(false)}
-                className="inline-flex items-center gap-sm rounded-lg bg-primary px-lg py-sm text-sm font-semibold text-secondary border border-primary shadow-xs hover:bg-secondary-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmTrade}
-                className="inline-flex items-center gap-sm rounded-lg border border-transparent bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand shadow-xs hover:bg-brand-solid-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-              >
-                Confirm &amp; Execute
-              </button>
-            </footer>
           </div>
+          <button
+            onClick={() => ticketRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="shrink-0 max-w-[45%] truncate rounded-lg bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand"
+          >
+            {ticket.side === 'buy' ? 'Buy' : 'Sell'} {outcome.label}
+          </button>
         </div>
       )}
-
-      {/* Deposit Modal */}
-      {depositModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-md">
-          <div className="fixed inset-0 bg-overlay opacity-70" onClick={() => setDepositModalOpen(false)}></div>
-          <div className="relative flex max-h-full w-full max-w-sm flex-col overflow-hidden rounded-lg bg-primary shadow-2xl border border-secondary">
-            <header className="border-b border-secondary p-xl">
-              <h2 className="text-base font-semibold text-primary">Fund Agent Trading Vault</h2>
-            </header>
-            <div className="p-xl space-y-sm text-xs font-mono">
-              <div className="flex flex-col gap-sm">
-                <label className="text-sm font-medium text-secondary">USDC Amount to Deposit</label>
-                <input
-                  type="number"
-                  value={depositAmt}
-                  onChange={e => setDepositAmt(e.target.value)}
-                  className="rounded-md bg-primary px-lg py-sm text-sm text-primary placeholder:text-placeholder border border-primary focus-visible:ring-2 focus-visible:ring-focus-ring font-mono"
-                />
-                <p className="text-xs text-tertiary">
-                  Funds are held in your dedicated Sui agent vault for autonomous arbitrage.
-                </p>
-              </div>
-            </div>
-            <footer className="flex justify-end gap-sm border-t border-secondary p-xl">
-              <button
-                onClick={() => setDepositModalOpen(false)}
-                className="inline-flex items-center gap-sm rounded-lg bg-primary px-lg py-sm text-sm font-semibold text-secondary border border-primary shadow-xs hover:bg-secondary-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAgentDeposit}
-                className="inline-flex items-center gap-sm rounded-lg border border-transparent bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand shadow-xs hover:bg-brand-solid-hover focus-visible:ring-2 focus-visible:ring-focus-ring"
-              >
-                Deposit USDC
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
-
-      {/* Bottom Tabs: Positions, Open Orders, Trade History */}
-      <div className="space-y-sm">
-        <div className="flex gap-lg border-b border-secondary">
-          <button
-            onClick={() => setBottomTab('positions')}
-            className={`border-b-2 px-md py-sm text-sm font-semibold uppercase transition-colors ${
-              bottomTab === 'positions' ? 'border-brand text-brand-primary' : 'border-transparent text-tertiary hover:text-secondary'
-            }`}
-          >
-            Positions ({positions.length})
-          </button>
-          <button
-            onClick={() => setBottomTab('orders')}
-            className={`border-b-2 px-md py-sm text-sm font-semibold uppercase transition-colors ${
-              bottomTab === 'orders' ? 'border-brand text-brand-primary' : 'border-transparent text-tertiary hover:text-secondary'
-            }`}
-          >
-            Open Orders ({orders.length})
-          </button>
-          <button
-            onClick={() => setBottomTab('history')}
-            className={`border-b-2 px-md py-sm text-sm font-semibold uppercase transition-colors ${
-              bottomTab === 'history' ? 'border-brand text-brand-primary' : 'border-transparent text-tertiary hover:text-secondary'
-            }`}
-          >
-            Trade History ({history.length})
-          </button>
-        </div>
-
-        {bottomTab === 'positions' && (
-          <Panel noPadding>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-                    <th className="py-xs px-sm">Market</th>
-                    <th className="py-xs px-sm">Outcome</th>
-                    <th className="py-xs px-sm">Venue</th>
-                    <th className="py-xs px-sm">Shares</th>
-                    <th className="py-xs px-sm">Avg Price</th>
-                    <th className="py-xs px-sm">Current Price</th>
-                    <th className="py-xs px-sm">Unrealized PnL</th>
-                    <th className="py-xs px-sm text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-secondary">
-                  {positions.map((p: any) => (
-                    <tr key={p.id} className="hover:bg-secondary-hover transition-colors">
-                      <td className="py-sm px-sm font-sans font-medium text-primary">{p.marketTitle}</td>
-                      <td className="py-sm px-sm font-bold text-utility-success-700">{p.outcomeLabel}</td>
-                      <td className="py-sm px-sm font-sans">
-                        <VenuePill name={VENUE_MAP.get(p.venueId)?.name || p.venueId} color={VENUE_MAP.get(p.venueId)?.color || '#fff'} />
-                      </td>
-                      <td className="py-sm px-sm">{p.shares}</td>
-                      <td className="py-sm px-sm">{(p.avgPrice * 100).toFixed(1)}¢</td>
-                      <td className="py-sm px-sm font-bold">{(p.currentPrice * 100).toFixed(1)}¢</td>
-                      <td className={`py-sm px-sm font-bold ${p.pnl >= 0 ? 'text-utility-success-700' : 'text-utility-error-700'}`}>
-                        {p.pnl >= 0 ? `+$${p.pnl.toFixed(2)}` : `-$${Math.abs(p.pnl).toFixed(2)}`}
-                      </td>
-                      <td className="py-sm px-sm text-right">
-                        <button
-                          onClick={() => {
-                            setSide('sell')
-                            setAmount(p.shares.toString())
-                            showToast('Filled Sell Ticket from Position')
-                          }}
-                          className="px-sm py-xxs rounded bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 text-xs font-bold"
-                        >
-                          Close
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        )}
-
-        {bottomTab === 'orders' && (
-          <Panel noPadding>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-                    <th className="py-xs px-sm">Order ID</th>
-                    <th className="py-xs px-sm">Market</th>
-                    <th className="py-xs px-sm">Type / Side</th>
-                    <th className="py-xs px-sm">Limit Price</th>
-                    <th className="py-xs px-sm">Amount</th>
-                    <th className="py-xs px-sm">Status</th>
-                    <th className="py-xs px-sm text-right">Cancel</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-secondary">
-                  {orders.map((o: any) => (
-                    <tr key={o.id} className="hover:bg-secondary-hover transition-colors">
-                      <td className="py-sm px-sm text-quaternary">{o.id}</td>
-                      <td className="py-sm px-sm font-sans font-medium text-primary">{o.marketTitle}</td>
-                      <td className="py-sm px-sm font-bold text-utility-success-700">
-                        {o.type.toUpperCase()} {o.side.toUpperCase()}
-                      </td>
-                      <td className="py-sm px-sm">{(o.price * 100).toFixed(1)}¢</td>
-                      <td className="py-sm px-sm">${o.amount}</td>
-                      <td className="py-sm px-sm font-bold text-utility-warning-700 uppercase">{o.status}</td>
-                      <td className="py-sm px-sm text-right">
-                        <button
-                          onClick={async () => {
-                            await fetch(`/api/trade/orders/${o.id}`, { method: 'DELETE' })
-                            reloadUserData()
-                            showToast('Order Cancelled')
-                          }}
-                          className="px-sm py-xxs bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 rounded text-xs"
-                        >
-                          Cancel
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        )}
-
-        {bottomTab === 'history' && (
-          <Panel noPadding>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-                    <th className="py-xs px-sm">Execution ID</th>
-                    <th className="py-xs px-sm">Market</th>
-                    <th className="py-xs px-sm">Mode</th>
-                    <th className="py-xs px-sm">Venue</th>
-                    <th className="py-xs px-sm">Side</th>
-                    <th className="py-xs px-sm">Fill Price</th>
-                    <th className="py-xs px-sm">Shares</th>
-                    <th className="py-xs px-sm text-right">Tx Digest</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-secondary">
-                  {history.map((h: any) => (
-                    <tr key={h.id} className="hover:bg-secondary-hover transition-colors">
-                      <td className="py-sm px-sm text-quaternary">{h.id}</td>
-                      <td className="py-sm px-sm font-sans font-medium text-primary">{h.marketTitle}</td>
-                      <td className="py-sm px-sm font-bold text-brand-primary">{h.mode}</td>
-                      <td className="py-sm px-sm font-sans">
-                        <VenuePill name={VENUE_MAP.get(h.venueId)?.name || h.venueId} color={VENUE_MAP.get(h.venueId)?.color || '#fff'} />
-                      </td>
-                      <td className={`py-sm px-sm font-bold ${h.side === 'buy' ? 'text-utility-success-700' : 'text-utility-error-700'}`}>
-                        {h.side.toUpperCase()}
-                      </td>
-                      <td className="py-sm px-sm">{(h.price * 100).toFixed(1)}¢</td>
-                      <td className="py-sm px-sm">{h.shares}</td>
-                      <td className="py-sm px-sm text-right text-tertiary">
-                        {h.txDigest ? `${h.txDigest.slice(0, 10)}…` : 'Internal'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        )}
-      </div>
     </div>
+  )
+}
+
+export default function TradePage() {
+  return (
+    <SuiWalletScope>
+      <TradeWorkspace />
+    </SuiWalletScope>
   )
 }

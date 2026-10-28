@@ -2,6 +2,25 @@ import { serverStore } from '../store.mjs'
 import { MOCK_EVENTS } from '../mock/events.mjs'
 import { MOCK_WALLETS } from '../mock/wallets.mjs'
 
+// TODO: replace the timer with a real Walrus Memory write; status flips when the blob lands.
+export function rememberEntry({ kind, text, eventId, wallet }) {
+  const entry = {
+    id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    kind,
+    text,
+    eventId,
+    wallet,
+    createdAt: new Date().toISOString(),
+    status: 'queued'
+  }
+  serverStore.memories.unshift(entry)
+  setTimeout(() => {
+    entry.status = 'stored'
+    entry.blobId = `walrus_blob_${Date.now().toString(16)}`
+  }, 4500)
+  return entry
+}
+
 // Tokenizer and ranker (Bug fix j)
 export function recallMemories(query) {
   const all = serverStore.memories
