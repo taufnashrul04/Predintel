@@ -63,7 +63,7 @@ export default function CopySignals({ address, limit = 8 }: { address: string; l
     )
   }
   if (error && !flow) return <p className="text-xs text-utility-error-700">Couldn't load on-chain fills: {error}</p>
-  if (!flow) return <div className="h-16 rounded bg-secondary animate-pulse" />
+  if (!flow) return <div className="h-16 rounded pi-shimmer" />
   if (signals.length === 0) {
     return (
       <p className="text-xs text-tertiary">

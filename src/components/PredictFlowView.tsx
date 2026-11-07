@@ -36,7 +36,7 @@ export default function PredictFlowView({
     return (
       <div className="p-md grid grid-cols-1 md:grid-cols-3 gap-sm">
         {[0, 1, 2].map(i => (
-          <div key={i} className="h-32 rounded-lg bg-secondary animate-pulse" />
+          <div key={i} className="h-32 rounded-lg pi-shimmer" />
         ))}
       </div>
     )

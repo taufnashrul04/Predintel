@@ -202,7 +202,7 @@ export default function AgentVault({ wallet, onChange }: { wallet: AgentWallet |
   const [modal, setModal] = useState<'deposit' | 'withdraw' | null>(null)
 
   if (!wallet) {
-    return <div className="h-20 rounded-xl border border-secondary bg-secondary animate-pulse" />
+    return <div className="h-20 rounded-xl border border-secondary pi-shimmer" />
   }
 
   const spentPct = Math.min(100, (wallet.spentToday / wallet.rules.dailyBudget) * 100)

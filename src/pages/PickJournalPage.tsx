@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { FlashValue } from '../components/motion'
 import { useNavigate } from 'react-router-dom'
 import { Trash2, Plus, ExternalLink } from 'lucide-react'
 import { Panel, StatCard, VenuePill } from '../components/SharedUI'
@@ -150,7 +151,7 @@ function JournalWorkspace() {
                           <td className={`${td} text-tertiary`}>{sourceLabel(t, labels)}</td>
                           <td className={td}>{cents(t.entryPrice)}</td>
                           <td className={td}>
-                            {m?.status === 'awaiting' ? <span className="text-utility-warning-700">settling…</span> : cents(m?.mark)}
+                            {m?.status === 'awaiting' ? <span className="text-utility-warning-700">settling…</span> : <FlashValue value={m?.mark}>{cents(m?.mark)}</FlashValue>}
                           </td>
                           <td className={td}>{t.shares.toLocaleString('en-US')}</td>
                           <td className={`${td} font-bold ${pnl == null ? 'text-quaternary' : pnlTone(pnl)}`}>{pnl == null ? '—' : usd(pnl)}</td>

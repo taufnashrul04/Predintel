@@ -76,7 +76,7 @@ export default function LiveWalletPanel({ address }: { address: string }) {
       {error && !snapshot && (
         <p className="text-xs text-utility-error-700">Couldn't load live data: {error}</p>
       )}
-      {!snapshot && !error && <div className="h-24 rounded bg-secondary animate-pulse" />}
+      {!snapshot && !error && <div className="h-24 rounded pi-shimmer" />}
       {snapshot && (
         <div className="space-y-md text-xs font-mono">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-sm">

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { FlashValue } from '../motion'
 import { Zap, PenLine, AlertCircle } from 'lucide-react'
 import { Panel } from '../SharedUI'
 import { useApp } from '../../context/AppContext'
@@ -336,7 +337,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
 
         {quote && (
           <div className="p-xs bg-secondary rounded border border-secondary space-y-xxs text-[11px]">
-            <PreviewRow label="Avg fill price" value={cents(quote.avgFillPrice)} />
+            <PreviewRow label="Avg fill price" value={<FlashValue value={quote.avgFillPrice}>{cents(quote.avgFillPrice)}</FlashValue>} />
             <PreviewRow label={ticket.side === 'buy' ? 'Shares' : 'Shares sold'} value={quote.totalShares.toLocaleString('en-US')} />
             {ticket.side === 'buy' ? (
               <>
@@ -376,7 +377,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
           <button
             onClick={() => setConfirmOpen(true)}
             disabled={!canSubmit}
-            className="w-full inline-flex items-center justify-center gap-sm rounded-lg bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand hover:bg-brand-solid-hover disabled:opacity-50"
+            className="pi-sheen w-full inline-flex items-center justify-center gap-sm rounded-lg border border-transparent bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand hover:bg-brand-solid-hover disabled:opacity-50"
           >
             {ticket.mode === 'agent' ? <Zap className="size-4" /> : <PenLine className="size-4" />}
             {busy

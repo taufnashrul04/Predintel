@@ -16,10 +16,14 @@ import {
   Moon,
   Sparkles,
   Zap,
-  ArrowRight
+  ArrowRight,
+  TerminalSquare
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { VENUES } from '../lib/config/venues'
+import TickerTape from './TickerTape'
+import TerminalConsole, { toggleTerminal } from './TerminalConsole'
+import { useSpotlight } from './motion'
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme, toast, cmdOpen, setCmdOpen } = useApp()
@@ -28,6 +32,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [memoryCount, setMemoryCount] = useState(5)
   const navigate = useNavigate()
   const location = useLocation()
+  useSpotlight()
 
   // Live client UTC Clock
   useEffect(() => {
@@ -78,8 +83,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-primary text-primary flex flex-col font-sans selection:bg-brand-solid selection:text-primary-on-brand pb-14 md:pb-0">
       {/* Toast Notification (toast.md) */}
       {toast && (
-        <div className="fixed bottom-16 right-4 md:bottom-6 md:right-6 z-50 flex items-start gap-sm rounded-lg border border-secondary bg-primary p-lg shadow-lg animate-in fade-in slide-in-from-bottom-2 text-xs font-mono">
-          <Sparkles className="mt-xxs size-4 shrink-0 text-fg-brand-primary animate-spin" aria-hidden="true" />
+        <div className="fixed bottom-16 right-4 md:bottom-6 md:right-6 z-50 flex items-start gap-sm rounded-lg border border-secondary bg-primary p-lg shadow-lg pi-rise text-xs font-mono">
+          <Sparkles className="mt-xxs size-4 shrink-0 text-fg-brand-primary" aria-hidden="true" />
           <p className="text-sm text-secondary font-sans">{toast}</p>
         </div>
       )}
@@ -91,7 +96,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             onClick={() => navigate('/')}
             className="flex items-center gap-xs font-semibold text-sm tracking-wider uppercase text-left group"
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-brand-solid animate-pulse" />
+            <span className="pi-live w-2.5 h-2.5 rounded-full bg-brand-solid" />
             <span className="text-brand-primary font-bold group-hover:text-primary transition-colors">
               PredictIntel
             </span>
@@ -99,10 +104,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="text-tertiary hidden md:inline text-xs font-normal">Terminal</span>
           </button>
 
-          <div className="h-4 w-px bg-secondary hidden lg:block" />
+          <div className="h-4 w-px bg-secondary hidden xl:block" />
 
           {/* 7 Venues Connected Status */}
-          <div className="hidden lg:flex items-center gap-xs bg-tertiary px-sm py-xxs rounded-full border border-secondary text-xs">
+          <div className="hidden xl:flex items-center gap-xs bg-tertiary px-sm py-xxs rounded-full border border-secondary text-xs whitespace-nowrap">
             <span className="text-quaternary font-medium">7 VENUES:</span>
             {VENUES.map(v => (
               <span
@@ -135,6 +140,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Right Info: Theme Toggle, Walrus Memory Sync, Clock */}
         <div className="flex items-center gap-sm md:gap-md text-xs">
           <button
+            onClick={toggleTerminal}
+            className="hidden md:inline-flex items-center gap-xs px-sm py-xxs bg-tertiary hover:bg-secondary-hover border border-secondary hover:border-brand rounded-md text-secondary hover:text-primary transition-colors font-mono"
+            title="Open the command terminal (`)"
+          >
+            <TerminalSquare className="size-4 shrink-0 text-fg-brand-primary" />
+            <span>Terminal</span>
+            <kbd className="text-quaternary border border-secondary rounded px-xs bg-primary">`</kbd>
+          </button>
+          <button
             onClick={toggleTheme}
             className="p-xs bg-tertiary hover:bg-secondary-hover border border-secondary rounded-md text-secondary hover:text-primary transition-colors"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
@@ -144,18 +158,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           <button
             onClick={() => navigate('/memory')}
-            className="flex items-center gap-xs text-tertiary bg-tertiary px-sm py-xxs rounded-full border border-secondary font-mono hover:border-brand transition-colors"
+            className="flex items-center gap-xs text-tertiary bg-tertiary px-sm py-xxs rounded-full border border-secondary font-mono hover:border-brand transition-colors whitespace-nowrap"
           >
             <Brain className="size-3.5 text-fg-brand-primary" />
             <span className="hidden sm:inline">Walrus:</span>
             <strong className="text-brand-primary">{memoryCount} Blobs</strong>
           </button>
 
-          <div className="font-mono text-tertiary text-xs bg-tertiary px-sm py-xxs rounded-md border border-secondary hidden md:block">
+          <div className="font-mono text-tertiary text-xs bg-tertiary px-sm py-xxs rounded-md border border-secondary hidden xl:block whitespace-nowrap">
             <span>{timeStr || '2026-10-27 18:42:05 UTC'}</span>
           </div>
         </div>
       </header>
+      <TickerTape />
 
       {/* Main Container */}
       <div className="flex-1 flex overflow-hidden">
@@ -168,10 +183,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/"
               className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -182,10 +197,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/markets"
               className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive || location.pathname.startsWith('/markets/')
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -199,10 +214,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/trade"
               className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -218,10 +233,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/divergence"
               className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -237,10 +252,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/wallets"
               className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive || location.pathname.startsWith('/wallets/')
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -251,10 +266,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/leaderboard"
               className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -269,10 +284,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/journal"
               className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -283,10 +298,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/memory"
               className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -302,10 +317,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/alerts"
               className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -325,10 +340,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink
               to="/settings"
               className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-colors ${
+                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
                 }`
               }
             >
@@ -351,8 +366,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* Content View */}
-        <main className="flex-1 overflow-y-auto p-sm md:p-md lg:p-lg space-y-md">
-          {children}
+        <main className="relative flex-1 overflow-y-auto p-sm md:p-md lg:p-lg">
+          <div className="pi-aurora pointer-events-none absolute inset-x-0 top-0 h-72" aria-hidden="true" />
+          <div className="pi-backdrop pointer-events-none absolute inset-x-0 top-0 h-[28rem]" aria-hidden="true" />
+          <div key={location.pathname} className="pi-page relative space-y-md">
+            {children}
+          </div>
         </main>
       </div>
 
@@ -408,14 +427,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <span className="text-[10px]">Memory</span>
         </NavLink>
 
-        <button
-          onClick={() => setCmdOpen(true)}
-          className="flex flex-col items-center gap-0.5 p-1 text-quaternary"
-        >
-          <Search className="size-4" />
-          <span className="text-[10px]">Cmd+K</span>
+        <button onClick={toggleTerminal} className="flex flex-col items-center gap-0.5 p-1 text-quaternary">
+          <TerminalSquare className="size-4" />
+          <span className="text-[10px]">Terminal</span>
         </button>
       </nav>
+      <TerminalConsole />
     </div>
   )
 }

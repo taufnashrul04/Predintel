@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, X, ChevronRight } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { toggleTerminal } from './TerminalConsole'
 
 export function CommandPalette() {
   const { cmdOpen, setCmdOpen } = useApp()
@@ -43,6 +44,15 @@ export function CommandPalette() {
         setCmdOpen(false)
       }
     })),
+    {
+      type: 'Console',
+      title: 'Open command terminal (`)',
+      sub: 'Type commands: markets, odds, buy, flow, wallet, track',
+      action: () => {
+        setCmdOpen(false)
+        toggleTerminal()
+      }
+    },
     {
       type: 'Trade',
       title: 'Open Trade Terminal (/trade)',

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { FlashValue } from '../motion'
 import { Activity, ExternalLink } from 'lucide-react'
 import { Panel } from '../SharedUI'
 import { formatMoney, formatTimeAgo } from '../../lib/formatters'
@@ -77,14 +78,12 @@ export default function LiveOddsPanel({
       {error && (
         <div className="space-y-sm text-xs">
           <p className="text-utility-warning-700">{error}</p>
-          {isDeepbook || /DeepBook/.test(error) ? (
-            <button onClick={onNextWindow} className="rounded-lg bg-brand-solid px-md py-xs font-bold text-primary-on-brand">
-              Go to the next open window
-            </button>
-          ) : null}
+          <button onClick={onNextWindow} className="pi-sheen rounded-lg border border-transparent bg-brand-solid px-md py-xs font-bold text-primary-on-brand">
+            {isDeepbook || /DeepBook/.test(error) ? 'Go to the next open window' : 'Pick another live market'}
+          </button>
         </div>
       )}
-      {!detail && !error && <div className="h-48 rounded bg-secondary animate-pulse" />}
+      {!detail && !error && <div className="h-48 rounded pi-shimmer" />}
       {detail && !error && closed && (
         <div className="space-y-sm text-xs">
           <p className="text-utility-warning-700">This window has closed and is waiting for settlement.</p>
@@ -149,8 +148,8 @@ export default function LiveOddsPanel({
                         <span className="block h-full bg-brand-solid" style={{ width: `${Math.round(o.mid * 100)}%` }} />
                       </span>
                     </span>
-                    <span className="text-right w-14 font-bold text-utility-success-700">{cents(o.ask)}</span>
-                    <span className="text-right w-14 text-utility-error-700">{cents(o.bid)}</span>
+                    <span className="text-right w-14 font-bold text-utility-success-700"><FlashValue value={o.ask}>{cents(o.ask)}</FlashValue></span>
+                    <span className="text-right w-14 text-utility-error-700"><FlashValue value={o.bid}>{cents(o.bid)}</FlashValue></span>
                     <span className="text-right w-16 text-quaternary">{o.volumeUsd ? formatMoney(o.volumeUsd) : '—'}</span>
                   </button>
                 )

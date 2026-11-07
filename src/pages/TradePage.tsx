@@ -18,6 +18,7 @@ import {
 } from '../components/trade/types'
 import { VENUE_MAP } from '../lib/config/venues'
 import SuiWalletScope from '../components/SuiWalletScope'
+import { FlashValue } from '../components/motion'
 
 interface MarketSummary {
   id: string
@@ -217,10 +218,12 @@ function TradeWorkspace() {
     { key: 'deepbook', label: 'DeepBook Predict · BTC up/down', items: (liveList?.deepbook ?? []).filter(matchesFilter).map(m => liveSummary(m, 'deepbook')), error: liveList?.errors.deepbook },
     { key: 'waterx', label: 'WaterX', items: (liveList?.waterx ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: liveList?.errors.waterx }
   ]
+  // Leaves a closed live market: the newest DeepBook window, or the top WaterX event.
   const nextDeepbookWindow = () => {
+    const windows = (liveList?.deepbook ?? []).filter(m => m.id !== marketParam)
+    const events = (liveList?.waterx ?? []).filter(m => m.id !== marketParam)
     // Windows are sorted soonest-first; the last one leaves the most time to trade.
-    const others = (liveList?.deepbook ?? []).filter(m => m.id !== marketParam)
-    const next = others[others.length - 1]
+    const next = marketParam?.startsWith('wx:') ? events[0] ?? windows[windows.length - 1] : windows[windows.length - 1] ?? events[0]
     if (next) selectMarket(next.id)
   }
 
@@ -236,7 +239,7 @@ function TradeWorkspace() {
       >
         <div className="flex items-center justify-between gap-sm text-[10px] text-quaternary uppercase mb-xxs">
           <span className="truncate">{m.live && lead ? lead.label : m.category}</span>
-          <span className="font-mono text-primary font-bold">{cents(lead ? m.outcomePrices[lead.id] : null)}</span>
+          <FlashValue value={lead ? m.outcomePrices[lead.id] : null} className="font-mono text-primary font-bold">{cents(lead ? m.outcomePrices[lead.id] : null)}</FlashValue>
         </div>
         <div className={`text-xs text-primary leading-snug line-clamp-2 ${selected ? 'font-semibold' : ''}`}>{m.title}</div>
         {!m.live && <div className="mt-xxs text-[10px] text-quaternary font-mono">{m.venues.map(v => v.name).join(' · ')}</div>}
@@ -310,7 +313,7 @@ function TradeWorkspace() {
                 </>
               ) : !liveList ? (
                 <div className="p-sm space-y-xs">
-                  {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded bg-secondary animate-pulse" />)}
+                  {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded pi-shimmer" />)}
                 </div>
               ) : (
                 liveGroups.map(g => (
@@ -347,7 +350,7 @@ function TradeWorkspace() {
                     }`}
                   >
                     <span>{o.label}</span>
-                    <span>{cents(outcomePrices[o.id])}</span>
+                    <FlashValue value={outcomePrices[o.id]}>{cents(outcomePrices[o.id])}</FlashValue>
                   </button>
                 ))}
               </div>
@@ -356,12 +359,12 @@ function TradeWorkspace() {
         </div>
 
         <div className="lg:col-span-5 space-y-md">
-          {market?.live ? (
+          {market?.live || isLive ? (
             <LiveOddsPanel
               detail={liveDetail}
               error={liveError}
               selectedOutcomeId={outcomeId}
-              onSelectOutcome={id => selectMarket(market.slug, id)}
+              onSelectOutcome={id => selectMarket(market?.slug ?? marketParam!, id)}
               btcPrice={livePrices?.prices.BTC?.price ?? null}
               onNextWindow={nextDeepbookWindow}
             />
@@ -384,7 +387,7 @@ function TradeWorkspace() {
             )}
             <div className="h-60 w-full">
               {historyPoints.length === 0 ? (
-                <div className="h-full rounded bg-secondary animate-pulse" />
+                <div className="h-full rounded pi-shimmer" />
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={historyPoints}>
@@ -474,7 +477,7 @@ function TradeWorkspace() {
               priceVersion={liveError ?? liveDetail?.fetchedAt}
             />
           ) : (
-            <div className="h-96 rounded-xl border border-secondary bg-secondary animate-pulse" />
+            <div className="h-96 rounded-xl border border-secondary pi-shimmer" />
           )}
         </div>
       </div>

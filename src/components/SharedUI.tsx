@@ -1,3 +1,4 @@
+import { AnimatedNumber } from './motion'
 import React from 'react'
 
 export interface PanelProps {
@@ -29,7 +30,7 @@ export function Panel({
   }[badgeVariant]
 
   return (
-    <section className={`rounded-xl border border-secondary bg-primary shadow-xs flex flex-col ${className}`}>
+    <section className={`pi-spotlight rounded-xl border border-secondary bg-primary shadow-xs flex flex-col ${className}`}>
       {title && (
         <div className="h-12 px-xl border-b border-secondary flex items-center justify-between shrink-0">
           <div className="flex items-center gap-sm">
@@ -67,7 +68,7 @@ export function StatCard({
   indicatorColor
 }: StatCardProps) {
   return (
-    <section className="rounded-xl border border-secondary bg-primary p-xl shadow-xs flex flex-col justify-between">
+    <section className="pi-spotlight pi-lift rounded-xl border border-secondary bg-primary p-xl shadow-xs flex flex-col justify-between">
       <div>
         <div className="text-tertiary uppercase text-xs font-semibold tracking-wider mb-xxs flex items-center justify-between">
           <span>{label}</span>
@@ -79,7 +80,7 @@ export function StatCard({
           )}
         </div>
         <div className="mt-md text-heading-xs font-mono font-semibold text-primary tracking-tight">
-          {value}
+          <AnimatedNumber value={value} />
         </div>
       </div>
       <div className="mt-md text-xs flex items-center justify-between">

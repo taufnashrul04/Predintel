@@ -82,8 +82,9 @@ function getWaterxEvent(slug) {
         const ask = round4(up.oddsCents / 100)
         const bid = round4(Math.max(0, 1 - down.oddsCents / 100))
         return {
-          id: item.market.display?.option?.code ?? item.market.slug,
-          label: item.market.display?.option?.name ?? item.market.slug,
+          // Binary options carry `option`; sport awards carry `candidate`.
+          id: (item.market.display?.option ?? item.market.display?.candidate)?.code ?? item.market.slug,
+          label: (item.market.display?.option ?? item.market.display?.candidate)?.name ?? item.market.title ?? item.market.slug,
           ask,
           bid,
           mid: round4((ask + bid) / 2),

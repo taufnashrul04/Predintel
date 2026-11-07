@@ -88,7 +88,7 @@ function MyWalletRow({ wallet, onRemove }: { wallet: MyWallet; onRemove: (w: MyW
   const { snapshot, error } = useWalletSnapshot(wallet.address)
   const pending = !snapshot && !error
   const cell = (value: React.ReactNode) =>
-    pending ? <span className="inline-block h-3 w-16 rounded bg-secondary animate-pulse" /> : error ? <span className="text-quaternary">—</span> : value
+    pending ? <span className="inline-block h-3 w-16 rounded pi-shimmer" /> : error ? <span className="text-quaternary">—</span> : value
 
   return (
     <tr onClick={() => navigate(`/wallets/${wallet.address}`)} className="hover:bg-secondary-hover cursor-pointer transition-colors">
@@ -140,7 +140,7 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
     <Panel title="On-chain traders · DeepBook Predict" badge="SUI MAINNET" badgeVariant="success" noPadding>
       <div className="overflow-x-auto">
         {error && !flow && <p className="p-xl text-center text-xs text-utility-error-700">Couldn't load traders: {error}</p>}
-        {!flow && !error && <div className="m-md h-32 rounded bg-secondary animate-pulse" />}
+        {!flow && !error && <div className="m-md h-32 rounded pi-shimmer" />}
         {flow && (
           <table className="w-full text-left text-xs font-mono">
             <thead>

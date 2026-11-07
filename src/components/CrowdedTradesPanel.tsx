@@ -135,7 +135,7 @@ export default function CrowdedTradesPanel() {
       ) : groups === null ? (
         <div className="p-md grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-sm">
           {[0, 1, 2, 3].map(i => (
-            <div key={i} className="h-36 rounded-lg bg-secondary animate-pulse" />
+            <div key={i} className="h-36 rounded-lg pi-shimmer" />
           ))}
         </div>
       ) : groups.length === 0 ? (
@@ -149,7 +149,7 @@ export default function CrowdedTradesPanel() {
               tabIndex={0}
               onClick={() => navigate(`/markets/${g.slug}`)}
               onKeyDown={e => e.key === 'Enter' && navigate(`/markets/${g.slug}`)}
-              className="text-left p-sm rounded-lg border border-secondary bg-secondary hover:bg-secondary-hover transition-colors space-y-xs cursor-pointer"
+              className="pi-lift text-left p-sm rounded-lg border border-secondary bg-secondary hover:bg-secondary-hover transition-colors space-y-xs cursor-pointer"
             >
               <div className="flex items-center justify-between gap-sm">
                 <span className="inline-flex items-center gap-xs text-sm font-bold text-primary font-mono">
