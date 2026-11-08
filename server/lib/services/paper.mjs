@@ -1,64 +1,15 @@
-// Paper trading: Sui sign-in sessions, server-priced paper fills, and live marks / settlement.
-// The journal itself lives in the user's browser; the server only proves wallet ownership and prices.
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+// Paper trading: server-priced paper fills and live marks / settlement. No wallet needed;
+// the journal itself lives in the user's browser, the server only prices.
+import { randomBytes } from 'node:crypto'
 import { SuiGraphQLClient } from '@mysten/sui/graphql'
 import { getConfig } from '@mysten/deepbook-v3/predict'
 import { MOCK_QUOTES } from '../mock/quotes.mjs'
 import { computeTradeQuote, findEvent, suiListingVenues, TradeError, MAX_ORDER_USDC } from './trading.mjs'
 import { getLiveMarket, isLiveMarketId } from './livePredict.mjs'
 
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000
-const CHALLENGE_TTL_MS = 5 * 60 * 1000
-// Sessions survive restarts only when a secret is configured; otherwise users simply sign in again.
-const SECRET = process.env.PAPER_SESSION_SECRET || randomBytes(32).toString('hex')
-
-const challenges = new Map()
-
-export function createChallenge(address) {
-  const nonce = randomBytes(12).toString('hex')
-  const message = [
-    'PredictIntel paper journal sign-in',
-    `Address: ${address}`,
-    `Nonce: ${nonce}`,
-    `Issued: ${new Date().toISOString()}`,
-    'Signing proves you own this wallet. It does not move funds or cost gas.'
-  ].join('\n')
-  challenges.set(address, { message, expiresAt: Date.now() + CHALLENGE_TTL_MS })
-  return message
-}
-
-export function takeChallenge(address) {
-  const c = challenges.get(address)
-  challenges.delete(address)
-  if (!c || c.expiresAt < Date.now()) return null
-  return c.message
-}
-
-const sign = payload => createHmac('sha256', SECRET).update(payload).digest('base64url')
-
-export function issueSession(address) {
-  const expiresAt = Date.now() + SESSION_TTL_MS
-  const payload = Buffer.from(JSON.stringify({ a: address, e: expiresAt })).toString('base64url')
-  return { token: `${payload}.${sign(payload)}`, address, expiresAt: new Date(expiresAt).toISOString() }
-}
-
-export function readSession(header) {
-  const token = typeof header === 'string' ? header.replace(/^Bearer\s+/i, '') : ''
-  const [payload, mac] = token.split('.')
-  if (!payload || !mac) return null
-  const expected = Buffer.from(sign(payload))
-  const given = Buffer.from(mac)
-  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null
-  try {
-    const { a, e } = JSON.parse(Buffer.from(payload, 'base64url').toString())
-    return e > Date.now() ? { address: a, expiresAt: e } : null
-  } catch {
-    return null
-  }
-}
-
-// A paper buy priced exactly like a real order: live ask on WaterX / DeepBook Predict, book walk on demo markets.
+// A paper buy priced exactly like a real order, at the live ask on WaterX / DeepBook Predict.
 export function paperFill(input) {
+  if (!isLiveMarketId(input.market)) throw new TradeError('Paper trading uses live WaterX and DeepBook Predict markets only.')
   const amount = Number(input.amount)
   if (!Number.isFinite(amount) || amount <= 0) throw new TradeError('Amount must be greater than 0.')
   if (amount > MAX_ORDER_USDC) throw new TradeError(`Amount cannot exceed $${MAX_ORDER_USDC.toLocaleString('en-US')}.`)
@@ -142,8 +93,8 @@ export async function markPositions(positions) {
         const bid = demoBid(p.market, p.outcomeId)
         return { ...base, status: bid == null ? 'unknown' : 'open', mark: bid, demo: true }
       } catch {
-        // A DeepBook window in its last seconds drops off the board before it settles.
-        return { ...base, status: p.market?.startsWith('dbp:') ? 'awaiting' : 'unknown', mark: null }
+        // A DeepBook window or WaterX round in its last seconds drops off the board before it settles.
+        return { ...base, status: /^(dbp|wxm):/.test(p.market ?? '') ? 'awaiting' : 'unknown', mark: null }
       }
     })
   )

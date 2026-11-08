@@ -5,6 +5,7 @@ import { Panel, VenuePill } from '../components/SharedUI'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatMoney } from '../lib/formatters'
 import { useApp } from '../context/AppContext'
+import LiveMarketsBoard from '../components/markets/LiveMarketsBoard'
 
 export default function MarketsPage() {
   const [markets, setMarkets] = useState<any[]>([])
@@ -17,6 +18,7 @@ export default function MarketsPage() {
   const searchFilter = searchParams.get('q') || ''
   const sortBy = searchParams.get('sort') || 'volume'
   const viewMode = searchParams.get('view') || 'table'
+  const source = searchParams.get('src') === 'demo' ? 'demo' : 'live'
 
   const categories = ['all', 'crypto', 'macro', 'sports', 'politics', 'culture']
 
@@ -74,6 +76,22 @@ export default function MarketsPage() {
       {/* Controls Bar */}
       <div className="bg-secondary border border-secondary rounded-xl p-sm flex flex-wrap items-center justify-between gap-sm">
         <div className="flex items-center gap-xs flex-wrap">
+          <div className="flex items-center gap-xxs bg-tertiary p-xxs rounded-md border border-secondary" role="tablist" aria-label="Market source">
+            {(['live', 'demo'] as const).map(src => (
+              <button
+                key={src}
+                role="tab"
+                aria-selected={source === src}
+                onClick={() => setParam('src', src === 'live' ? '' : 'demo')}
+                className={`px-sm py-xxs rounded text-xs font-bold transition-colors ${
+                  source === src ? 'bg-brand-solid text-primary-on-brand' : 'text-tertiary hover:text-primary'
+                }`}
+              >
+                {src === 'live' ? 'Live on Sui' : 'Cross-venue (demo)'}
+              </button>
+            ))}
+          </div>
+
           <div className="relative">
             <Search className="size-3.5 text-fg-quaternary absolute left-sm top-2.5" />
             <input
@@ -111,8 +129,14 @@ export default function MarketsPage() {
               className="bg-primary border border-secondary text-primary rounded px-sm py-xxs text-xs focus:outline-none"
             >
               <option value="volume">Volume</option>
-              <option value="oi">Open Interest</option>
-              <option value="spread">Spread</option>
+              {source === 'live' ? (
+                <option value="closing">Closing soon</option>
+              ) : (
+                <>
+                  <option value="oi">Open Interest</option>
+                  <option value="spread">Spread</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -137,8 +161,9 @@ export default function MarketsPage() {
         </div>
       </div>
 
-      {/* Table Mode */}
-      {viewMode === 'table' ? (
+      {source === 'live' ? (
+        <LiveMarketsBoard category={categoryFilter} search={searchFilter} sort={sortBy} view={viewMode} />
+      ) : viewMode === 'table' ? (
         <Panel noPadding>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">

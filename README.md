@@ -103,11 +103,12 @@ TATUM_API_KEY=your_key
 
 ## Paper Journal
 
-- **Sign in with Sui** (`/api/paper/auth/challenge` → wallet `signPersonalMessage` → `/api/paper/auth/verify`): the server verifies the signature and issues an HMAC session token (24h). Set `PAPER_SESSION_SECRET` to keep sessions valid across restarts.
-- **Paper fills** (`POST /api/paper/fill`, session required): priced by the server exactly like a real buy — live ask on WaterX / DeepBook Predict, book walk on demo markets.
+- **No wallet needed.** Paper trades are saved in the browser (one journal per browser); the server only prices and marks.
+- **Paper fills** (`POST /api/paper/fill`): live markets only (WaterX events, matches and up/down rounds; DeepBook Predict windows), priced at the venue's live ask.
 - **Marks** (`POST /api/paper/marks`): live bid for open positions; DeepBook Predict windows settle to $1 / $0 from on-chain `MarketSettled` events.
-- Entry points: Trade tab **Paper (journal)** mode, Dashboard **Paper buy** buttons, and **Copy** signals from tracked wallets' real DeepBook Predict fills (same window and direction, at the reference strike).
-- The journal (trades, tracked wallets, copy size) is stored in the browser per signed-in wallet; the server keeps no journal state.
+- Close a paper position from the Journal, the Trade tab's Positions table, or by selling it in the Trade ticket (Paper mode).
+- Vault positions (Agent mode) close outright with `POST /api/trade/positions/:id/close`, selling every share into the book.
+- Entry points: Trade tab **Paper (journal)** mode, the terminal `buy` command, and **Copy** signals from tracked wallets' real DeepBook Predict fills.
 
 ---
 
@@ -119,7 +120,7 @@ TATUM_API_KEY=your_key
 - **On-chain traders** (`GET /api/predict-flow`): real DeepBook Predict order flow from `OrderEnqueued` / `QueuedOrderFilled` events (Sui GraphQL; Tatum blocks `ListEvents`). Fills are joined to their orders for side and strike, and Predict accounts are mapped to owner wallets via `AccountCreated` events, scanned once in the background. Shown on the Dashboard (Crowded trades → On-chain) and Wallets (On-chain traders).
 - Live spot prices (`GET /api/live/prices`): SUI, BTC, WAL, DEEP from the **DeepBook indexer**, used for wallet value and the underlying-price chip on the Trade tab.
 - **Live prediction markets on the Trade tab** (`GET /api/trade/live-markets`, `GET /api/trade/live-markets/:id`):
-  - **WaterX**: event list and per-option YES ask / NO ask from WaterX's public predict API (`api.waterx.app/predict/events`). This API is undocumented and may change without notice.
+  - **WaterX**: up to 200 events (`/predict/events`) plus sport matches and recurring crypto up/down rounds from its feed (`/predict/feed`), with per-outcome ask/bid. This API is undocumented and may change without notice.
   - **DeepBook Predict** (Sui mainnet): open BTC up/down windows and their on-chain prices at the reference strike, read through `@mysten/deepbook-v3/predict`. Windows roll every few minutes.
   - Live orders price at the venue's live ask (buy) or bid (sell); fills are still simulated.
 - **Crowded trades → Demo** on the Dashboard (`GET /api/crowded?min=3`): outcomes where several mock tracked wallets took the same side.

@@ -6,6 +6,7 @@ import { serverStore } from '../lib/store.mjs'
 import {
   TradeError,
   agentState,
+  closeAgentPosition,
   computeTradeQuote,
   createDirectIntent,
   listPositions,
@@ -14,7 +15,7 @@ import {
   suiListingVenues
 } from '../lib/services/trading.mjs'
 import { LiveDataError } from '../lib/services/suiLive.mjs'
-import { getLiveMarket, isLiveMarketId, listDeepbookMarkets, listWaterxEvents } from '../lib/services/livePredict.mjs'
+import { getLiveMarket, isLiveMarketId, listDeepbookMarkets, listWaterxEvents, listWaterxFeedMarkets } from '../lib/services/livePredict.mjs'
 import { MOCK_EVENTS } from '../lib/mock/events.mjs'
 import { MOCK_QUOTES } from '../lib/mock/quotes.mjs'
 
@@ -70,12 +71,16 @@ router.get('/markets', (_req, res) => {
 })
 
 router.get('/live-markets', async (_req, res) => {
-  const [waterx, deepbook] = await Promise.allSettled([listWaterxEvents(), listDeepbookMarkets()])
+  const [waterx, feed, deepbook] = await Promise.allSettled([listWaterxEvents(), listWaterxFeedMarkets(), listDeepbookMarkets()])
+  const rounds = feed.status === 'fulfilled' ? feed.value : []
   res.json({
     waterx: waterx.status === 'fulfilled' ? waterx.value : [],
+    // Feed markets carry full outcomes; `preview` keeps them in the same shape as events for boards.
+    waterxMatches: rounds.filter(m => m.kind === 'sport-match').map(m => ({ ...m, preview: m.outcomes.map(o => ({ id: o.id, label: o.label, price: o.ask })) })),
+    waterxUpdown: rounds.filter(m => m.kind === 'crypto-updown').map(m => ({ ...m, preview: m.outcomes.map(o => ({ id: o.id, label: o.label, price: o.ask })) })),
     deepbook: deepbook.status === 'fulfilled' ? deepbook.value : [],
     errors: {
-      waterx: waterx.status === 'rejected' ? waterx.reason.message : null,
+      waterx: waterx.status === 'rejected' ? waterx.reason.message : feed.status === 'rejected' ? feed.reason.message : null,
       deepbook: deepbook.status === 'rejected' ? deepbook.reason.message : null
     }
   })
@@ -156,6 +161,16 @@ router.delete('/orders/:id', (req, res) => {
     wallet.balanceUSDC = Math.round((wallet.balanceUSDC + removed.amount) * 100) / 100
   }
   res.json({ success: true, removed })
+})
+
+router.post('/positions/:id/close', async (req, res) => {
+  try {
+    const position = serverStore.userPositions.find(p => p.id === req.params.id)
+    if (position) await loadLiveMarket({ market: position.eventId })
+    res.json(closeAgentPosition(req.params.id))
+  } catch (err) {
+    sendError(res, err)
+  }
 })
 
 router.get('/positions', (_req, res) => {

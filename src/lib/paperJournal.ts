@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
-// Paper journal: a Sui-signed session (server-verified) plus a per-wallet journal kept in this browser.
-// The preview server has no durable storage, so trades, tracked wallets and settings live in localStorage.
-
-export interface PaperSession {
-  address: string
-  token: string
-  expiresAt: string
-}
+// Paper journal: no wallet needed. One journal per browser, kept in localStorage because the preview
+// server has no durable storage. The server only prices fills and marks positions with live data.
 
 export type TradeSource =
   | { kind: 'trade' }
@@ -59,8 +53,8 @@ export interface PaperMark {
   demo?: boolean
 }
 
-const SESSION_KEY = 'predictintel:paper-session'
-const journalKey = (address: string) => `predictintel:journal:${address}`
+const JOURNAL_KEY = 'predictintel:journal:local'
+const LEGACY_PREFIX = 'predictintel:journal:0x'
 const CHANGE_EVENT = 'predictintel:journal-changed'
 const EMPTY: Journal = { trades: [], tracked: [], copySize: 10, dismissed: [] }
 
@@ -86,18 +80,28 @@ function save(key: string, value: string | null) {
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
-function readSession(): PaperSession | null {
+// Folds journals from the earlier per-wallet sign-in into the single local one, once.
+function migrateLegacy() {
   try {
-    const s = JSON.parse(load(SESSION_KEY) || 'null')
-    return s && Date.parse(s.expiresAt) > Date.now() ? s : null
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(LEGACY_PREFIX))
+    if (keys.length === 0) return
+    const merged: Journal = { ...EMPTY, ...JSON.parse(localStorage.getItem(JOURNAL_KEY) || '{}') }
+    for (const k of keys) {
+      const old = { ...EMPTY, ...JSON.parse(localStorage.getItem(k) || '{}') } as Journal
+      merged.trades = [...merged.trades, ...old.trades.filter(t => !merged.trades.some(m => m.id === t.id))]
+      merged.tracked = [...merged.tracked, ...old.tracked.filter(w => !merged.tracked.some(m => m.address === w.address))]
+      localStorage.removeItem(k)
+    }
+    localStorage.setItem(JOURNAL_KEY, JSON.stringify(merged))
+    localStorage.removeItem('predictintel:paper-session')
   } catch {
-    return null
+    // Storage blocked: nothing to migrate.
   }
 }
 
-function readJournal(address: string): Journal {
+function readJournal(): Journal {
   try {
-    return { ...EMPTY, ...JSON.parse(load(journalKey(address)) || '{}') }
+    return { ...EMPTY, ...JSON.parse(load(JOURNAL_KEY) || '{}') }
   } catch {
     return EMPTY
   }
@@ -114,77 +118,42 @@ function useStoreEvent(sync: () => void) {
   }, [sync])
 }
 
-async function postJson<T>(url: string, body: unknown, token?: string): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body)
-  })
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const data = await res.json().catch(() => ({}))
-  if (res.status === 401 && token) save(SESSION_KEY, null)
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
   return data as T
 }
 
-export function usePaperSession() {
-  const [session, setSession] = useState<PaperSession | null>(() => readSession())
-  useStoreEvent(useCallback(() => setSession(readSession()), []))
-
-  // Sessions are signed by the server; after a server restart they stop verifying, so re-check once.
-  useEffect(() => {
-    if (!session) return
-    fetch('/api/paper/auth/session', { headers: { Authorization: `Bearer ${session.token}` } })
-      .then(r => {
-        if (r.status === 401) save(SESSION_KEY, null)
-      })
-      .catch(() => {})
-  }, [session?.token])
-
-  const signIn = useCallback(async (address: string, signMessage: (message: Uint8Array) => Promise<{ signature: string }>) => {
-    const { message } = await postJson<{ message: string }>('/api/paper/auth/challenge', { address })
-    const { signature } = await signMessage(new TextEncoder().encode(message))
-    const next = await postJson<PaperSession>('/api/paper/auth/verify', { address, signature })
-    save(SESSION_KEY, JSON.stringify(next))
-    return next
-  }, [])
-
-  const signOut = useCallback(() => save(SESSION_KEY, null), [])
-
-  return { session, signIn, signOut }
-}
-
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-export function useJournal(address: string | null | undefined) {
-  const [journal, setJournal] = useState<Journal>(() => (address ? readJournal(address) : EMPTY))
-  const sync = useCallback(() => setJournal(address ? readJournal(address) : EMPTY), [address])
-  useEffect(sync, [sync])
+let migrated = false
+
+export function useJournal() {
+  if (!migrated) {
+    migrated = true
+    migrateLegacy()
+  }
+  const [journal, setJournal] = useState<Journal>(() => readJournal())
+  const sync = useCallback(() => setJournal(readJournal()), [])
   useStoreEvent(sync)
 
-  const update = useCallback(
-    (fn: (j: Journal) => Journal) => {
-      if (!address) return
-      save(journalKey(address), JSON.stringify(fn(readJournal(address))))
-    },
-    [address]
-  )
+  const update = useCallback((fn: (j: Journal) => Journal) => save(JOURNAL_KEY, JSON.stringify(fn(readJournal()))), [])
 
   // Buys at the server's live price and records the fill with where it came from.
   const paperBuy = useCallback(
     async (order: { market: string; outcome: string; amount: number }, source: TradeSource) => {
-      const session = readSession()
-      if (!session || session.address !== address) throw new Error('Sign in with your Sui wallet on the Journal page first.')
-      const fill = await postJson<Omit<PaperTrade, 'source' | 'status'>>('/api/paper/fill', order, session.token)
+      const fill = await postJson<Omit<PaperTrade, 'source' | 'status'>>('/api/paper/fill', order)
       const trade: PaperTrade = { ...fill, source, status: 'open' }
       update(j => ({ ...j, trades: [trade, ...j.trades] }))
       return trade
     },
-    [address, update]
+    [update]
   )
 
   const closeTrade = useCallback(
     async (id: string) => {
-      const trade = readJournal(address!).trades.find(t => t.id === id)
+      const trade = readJournal().trades.find(t => t.id === id)
       if (!trade || trade.status !== 'open') return
       const [mark] = await postJson<PaperMark[]>('/api/paper/marks', { positions: [trade] })
       if (mark?.mark == null) throw new Error('No live price to close at right now. Try again shortly.')
@@ -204,7 +173,7 @@ export function useJournal(address: string | null | undefined) {
         )
       }))
     },
-    [address, update]
+    [update]
   )
 
   const applySettlements = useCallback(
@@ -249,13 +218,13 @@ export function useJournal(address: string | null | undefined) {
 }
 
 // Live marks for open trades; settled DeepBook windows are written back into the journal.
-export function usePaperMarks(address: string | null | undefined, trades: PaperTrade[], applySettlements: (m: PaperMark[]) => void) {
+export function usePaperMarks(trades: PaperTrade[], applySettlements: (m: PaperMark[]) => void) {
   const [marks, setMarks] = useState<Record<string, PaperMark>>({})
   const open = trades.filter(t => t.status === 'open')
   const key = open.map(t => t.id).join(',')
 
   useEffect(() => {
-    if (!address || open.length === 0) return
+    if (open.length === 0) return
     let cancelled = false
     const load = () =>
       postJson<PaperMark[]>('/api/paper/marks', { positions: open })
@@ -271,7 +240,7 @@ export function usePaperMarks(address: string | null | undefined, trades: PaperT
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [address, key])
+  }, [key])
 
   return marks
 }

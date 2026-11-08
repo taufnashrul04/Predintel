@@ -9,7 +9,7 @@ import { fmtToken, useWalletSnapshot } from '../components/wallets/LiveWalletPan
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { MyWallet, parseSuiAddress, useMyWallets } from '../lib/myWallets'
 import { PredictFlow, shortId, usdFmt, usePredictFlow } from '../lib/predictFlow'
-import { useJournal, usePaperSession } from '../lib/paperJournal'
+import { useJournal } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
 type View = 'all' | 'following' | 'mine' | 'onchain'
@@ -132,8 +132,7 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
   const navigate = useNavigate()
   const { isMine, add } = useMyWallets()
   const { showToast } = useApp()
-  const { session } = usePaperSession()
-  const { journal, track } = useJournal(session?.address)
+  const { journal, track } = useJournal()
   const isCopied = (owner: string) => journal.tracked.some(w => w.address === owner)
 
   return (
@@ -182,10 +181,6 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
                       <button
                         onClick={e => {
                           e.stopPropagation()
-                          if (!session) {
-                            showToast('Sign in on the Journal page to copy wallets.')
-                            return navigate('/journal')
-                          }
                           if (isCopied(t.owner!)) return
                           track(t.owner!, `Predict ${shortId(t.owner!)}`)
                           showToast('Added to your journal copy list')

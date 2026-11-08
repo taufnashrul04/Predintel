@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TerminalSquare, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { useJournal, usePaperSession } from '../lib/paperJournal'
+import { useJournal } from '../lib/paperJournal'
 import { parseSuiAddress } from '../lib/myWallets'
 
 // A keyboard-first console over the same live APIs the pages use.
@@ -32,14 +32,13 @@ const COMMANDS: [string, string][] = [
   ['markets [search]', 'live WaterX + DeepBook Predict markets (numbered)'],
   ['odds <#|search>', 'every outcome with live buy / sell price'],
   ['open <#|search>', 'open a market on the Trade tab'],
-  ['buy <outcome> <usdc> [#|search]', 'paper buy (needs Journal sign-in)'],
+  ['buy <outcome> <usdc> [#|search]', 'paper buy at the live price'],
   ['positions', 'your open paper positions'],
   ['flow', 'real DeepBook Predict order flow and top traders'],
   ['wallet <0x…>', 'live balance and last activity of any Sui address'],
   ['track <0x…> [label]', 'add a wallet to your copy list'],
   ['go <page>', `navigate: ${Object.keys(PAGES).filter(p => p !== 'home').join(', ')}`],
   ['theme', 'toggle light / dark'],
-  ['whoami', 'paper-journal session'],
   ['clear', 'clear the screen']
 ]
 const NAMES = COMMANDS.map(([c]) => c.split(' ')[0])
@@ -60,8 +59,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 export default function TerminalConsole() {
   const navigate = useNavigate()
   const { toggleTheme } = useApp()
-  const { session } = usePaperSession()
-  const { journal, paperBuy, track } = useJournal(session?.address)
+  const { journal, paperBuy, track } = useJournal()
   const [open, setOpen] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
   const [input, setInput] = useState('')
@@ -119,7 +117,7 @@ export default function TerminalConsole() {
     const live = await getJson('/api/trade/live-markets')
     return [
       ...(live.deepbook ?? []).map((m: any) => ({ id: m.id, title: m.title, venue: 'DeepBook Predict' })),
-      ...(live.waterx ?? []).map((m: any) => ({ id: m.id, title: m.title, venue: 'WaterX' }))
+      ...[...(live.waterx ?? []), ...(live.waterxUpdown ?? []), ...(live.waterxMatches ?? [])].map((m: any) => ({ id: m.id, title: m.title, venue: 'WaterX' }))
     ]
   }
 
@@ -154,9 +152,6 @@ export default function TerminalConsole() {
       case 'theme':
         toggleTheme()
         print('ok', 'Theme toggled.')
-        return
-      case 'whoami':
-        print(session ? 'ok' : 'muted', session ? `Signed in as ${session.address}` : "Not signed in. Open the Journal ('go journal') and sign with your Sui wallet.")
         return
       case 'go': {
         const path = PAGES[(args[0] ?? '').toLowerCase()]
@@ -203,7 +198,6 @@ export default function TerminalConsole() {
         const [outcomeArg, amountArg, ...rest] = args
         const amount = Number(amountArg)
         if (!outcomeArg || !Number.isFinite(amount) || amount <= 0) throw new Error('Usage: buy <outcome> <usdc> [#|search]')
-        if (!session) throw new Error("Sign in first: 'go journal' and sign with your Sui wallet.")
         const ref = await resolveMarket(rest.join(' ') || undefined)
         const m = await getJson(`/api/trade/live-markets/${encodeURIComponent(ref.id)}`)
         const q = outcomeArg.toLowerCase()
@@ -215,7 +209,6 @@ export default function TerminalConsole() {
         return
       }
       case 'positions': {
-        if (!session) throw new Error("Not signed in. 'go journal' to sign in.")
         const open = journal.trades.filter(t => t.status === 'open')
         if (!open.length) return print('muted', 'No open paper positions.')
         open.forEach(t => print('out', <><span className="text-primary">{pad(t.marketTitle, 44)}</span><span className="text-brand-primary">{pad(t.outcomeLabel, 14)}</span><span className="text-tertiary">{t.shares} sh @ {cents(t.entryPrice)}</span></>))
@@ -240,7 +233,6 @@ export default function TerminalConsole() {
         return
       }
       case 'track': {
-        if (!session) throw new Error("Sign in first: 'go journal'.")
         const address = parseSuiAddress(args[0] ?? '')
         if (!address) throw new Error('Usage: track <Sui address> [label]')
         track(address, args.slice(1).join(' '))

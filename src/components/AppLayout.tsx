@@ -30,6 +30,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [timeStr, setTimeStr] = useState('')
   const [unreadAlerts, setUnreadAlerts] = useState(0)
   const [memoryCount, setMemoryCount] = useState(5)
+  const [liveMarketCount, setLiveMarketCount] = useState<number | null>(null)
   const navigate = useNavigate()
   const location = useLocation()
   useSpotlight()
@@ -62,6 +63,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     fetchCounters()
     const interval = setInterval(fetchCounters, 8000)
     return () => clearInterval(interval)
+  }, [])
+
+  // Live market count for the sidebar badge (the server caches this list).
+  useEffect(() => {
+    const load = () =>
+      fetch('/api/trade/live-markets')
+        .then(r => r.json())
+        .then(l => setLiveMarketCount(['deepbook', 'waterx', 'waterxMatches', 'waterxUpdown'].reduce((n, k) => n + (l[k]?.length ?? 0), 0)))
+        .catch(() => {})
+    load()
+    const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
   }, [])
 
   // Cmd+K shortcut
@@ -208,7 +221,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <TrendingUp className="size-4" />
                 <span>Markets</span>
               </div>
-              <span className="text-xs bg-tertiary px-xs rounded text-tertiary font-mono">14</span>
+              <span className="text-xs bg-tertiary px-xs rounded text-tertiary font-mono">{liveMarketCount ?? '…'}</span>
             </NavLink>
 
             <NavLink

@@ -20,11 +20,11 @@ function useNow(ms = 1000) {
 }
 
 // Buys by wallets this journal tracks, from real DeepBook Predict fills.
-export default function CopySignals({ address, limit = 8 }: { address: string; limit?: number }) {
+export default function CopySignals({ limit = 8 }: { limit?: number }) {
   const navigate = useNavigate()
   const { showToast } = useApp()
   const { flow, error } = usePredictFlow(15_000)
-  const { journal, paperBuy, dismiss } = useJournal(address)
+  const { journal, paperBuy, dismiss } = useJournal()
   const [busy, setBusy] = useState<string | null>(null)
   const now = useNow()
 

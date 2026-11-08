@@ -14,8 +14,10 @@ import {
   TicketState,
   TradeRecord,
   apiJson,
-  cents
+  cents,
+  usd
 } from '../components/trade/types'
+import { useApp } from '../context/AppContext'
 import { VENUE_MAP } from '../lib/config/venues'
 import SuiWalletScope from '../components/SuiWalletScope'
 import { FlashValue } from '../components/motion'
@@ -32,15 +34,20 @@ interface MarketSummary {
   live?: boolean
 }
 
+type WaterxListItem = { id: string; slug: string; title: string; category: string; volumeUsd: number; preview: { id: string; label: string; price: number }[] }
+
 interface LiveList {
-  waterx: { id: string; slug: string; title: string; category: string; volumeUsd: number; preview: { id: string; label: string; price: number }[] }[]
+  waterx: WaterxListItem[]
+  waterxMatches: WaterxListItem[]
+  waterxUpdown: WaterxListItem[]
   deepbook: LiveMarketDetail[]
   errors: { waterx: string | null; deepbook: string | null }
 }
 
-const isLiveId = (id: string | null) => Boolean(id && (id.startsWith('wx:') || id.startsWith('dbp:')))
+const isLiveId = (id: string | null) => Boolean(id && /^(wx|wxm|dbp):/.test(id))
+const allWaterx = (l: LiveList | null) => [...(l?.waterx ?? []), ...(l?.waterxMatches ?? []), ...(l?.waterxUpdown ?? [])]
 
-function liveSummary(m: LiveMarketDetail | LiveList['waterx'][number], venueId: 'waterx' | 'deepbook'): MarketSummary {
+function liveSummary(m: LiveMarketDetail | WaterxListItem, venueId: 'waterx' | 'deepbook'): MarketSummary {
   const outcomes = 'outcomes' in m ? m.outcomes.map(o => ({ id: o.id, label: o.label })) : m.preview.map(o => ({ id: o.id, label: o.label }))
   const prices = 'outcomes' in m
     ? Object.fromEntries(m.outcomes.map(o => [o.id, o.ask]))
@@ -66,6 +73,7 @@ interface LivePrices {
 const CATEGORIES = ['all', 'crypto', 'sports', 'politics', 'macro', 'culture']
 
 function TradeWorkspace() {
+  const { showToast } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const marketParam = searchParams.get('market')
   const outcomeParam = searchParams.get('outcome')
@@ -99,7 +107,7 @@ function TradeWorkspace() {
   const ticketRef = useRef<HTMLDivElement>(null)
 
   const liveListItem = isLive
-    ? liveList?.deepbook.find(m => m.id === marketParam) ?? liveList?.waterx.find(m => m.id === marketParam)
+    ? liveList?.deepbook.find(m => m.id === marketParam) ?? allWaterx(liveList).find(m => m.id === marketParam)
     : null
   const market = isLive
     ? liveDetail?.id === marketParam
@@ -216,14 +224,16 @@ function TradeWorkspace() {
   const filteredMarkets = markets.filter(matchesFilter)
   const liveGroups = [
     { key: 'deepbook', label: 'DeepBook Predict · BTC up/down', items: (liveList?.deepbook ?? []).filter(matchesFilter).map(m => liveSummary(m, 'deepbook')), error: liveList?.errors.deepbook },
-    { key: 'waterx', label: 'WaterX', items: (liveList?.waterx ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: liveList?.errors.waterx }
+    { key: 'waterx', label: 'WaterX · Events', items: (liveList?.waterx ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: liveList?.errors.waterx },
+    { key: 'waterx-updown', label: 'WaterX · Crypto up/down', items: (liveList?.waterxUpdown ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: null },
+    { key: 'waterx-matches', label: 'WaterX · Matches', items: (liveList?.waterxMatches ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: null }
   ]
   // Leaves a closed live market: the newest DeepBook window, or the top WaterX event.
   const nextDeepbookWindow = () => {
     const windows = (liveList?.deepbook ?? []).filter(m => m.id !== marketParam)
-    const events = (liveList?.waterx ?? []).filter(m => m.id !== marketParam)
+    const events = allWaterx(liveList).filter(m => m.id !== marketParam)
     // Windows are sorted soonest-first; the last one leaves the most time to trade.
-    const next = marketParam?.startsWith('wx:') ? events[0] ?? windows[windows.length - 1] : windows[windows.length - 1] ?? events[0]
+    const next = marketParam?.startsWith('wx') ? events[0] ?? windows[windows.length - 1] : windows[windows.length - 1] ?? events[0]
     if (next) selectMarket(next.id)
   }
 
@@ -247,15 +257,15 @@ function TradeWorkspace() {
     )
   }
 
-  const closePosition = (p: Position) => {
-    selectMarket(p.marketSlug, p.outcomeId)
-    setTicket(t => ({
-      ...t,
-      side: 'sell',
-      type: 'market',
-      amount: String(Math.max(1, Math.floor(p.shares * p.currentPrice)))
-    }))
-    ticketRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Sells every share of a vault position into the book right away.
+  const closePosition = async (p: Position) => {
+    try {
+      const r = await apiJson<{ shares: number; proceeds: number; avgPrice: number }>(`/api/trade/positions/${p.id}/close`, { method: 'POST' })
+      showToast(`Closed ${r.shares} ${p.outcomeLabel} shares @ ${cents(r.avgPrice)} · ${usd(r.proceeds)} back to the vault`)
+      reloadUserData()
+    } catch (err: any) {
+      showToast(`Couldn't close: ${err.message}`)
+    }
   }
 
   return (
@@ -277,7 +287,7 @@ function TradeWorkspace() {
                       listSource === src ? 'bg-brand-solid text-primary-on-brand' : 'text-quaternary hover:text-primary'
                     }`}
                   >
-                    {src === 'live' ? `Live (${(liveList?.deepbook.length ?? 0) + (liveList?.waterx.length ?? 0)})` : `Demo (${markets.length})`}
+                    {src === 'live' ? `Live (${(liveList?.deepbook.length ?? 0) + allWaterx(liveList).length})` : `Demo (${markets.length})`}
                   </button>
                 ))}
               </div>

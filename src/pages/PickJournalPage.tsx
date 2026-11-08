@@ -3,13 +3,11 @@ import { FlashValue } from '../components/motion'
 import { useNavigate } from 'react-router-dom'
 import { Trash2, Plus, ExternalLink } from 'lucide-react'
 import { Panel, StatCard, VenuePill } from '../components/SharedUI'
-import SuiWalletScope from '../components/SuiWalletScope'
-import PaperSignIn from '../components/journal/PaperSignIn'
 import CopySignals from '../components/journal/CopySignals'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatTimeAgo } from '../lib/formatters'
 import { parseSuiAddress } from '../lib/myWallets'
-import { PaperTrade, usePaperMarks, usePaperSession, useJournal } from '../lib/paperJournal'
+import { PaperTrade, usePaperMarks, useJournal } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
 const th = 'py-xs px-sm'
@@ -33,10 +31,8 @@ function Venue({ id }: { id: string }) {
 function JournalWorkspace() {
   const navigate = useNavigate()
   const { showToast } = useApp()
-  const { session } = usePaperSession()
-  const address = session?.address
-  const { journal, closeTrade, applySettlements, removeTrade, track, untrack, setCopySize } = useJournal(address)
-  const marks = usePaperMarks(address, journal.trades, applySettlements)
+  const { journal, closeTrade, applySettlements, removeTrade, track, untrack, setCopySize } = useJournal()
+  const marks = usePaperMarks(journal.trades, applySettlements)
   const [walletInput, setWalletInput] = useState('')
   const [labelInput, setLabelInput] = useState('')
   const [trackError, setTrackError] = useState<string | null>(null)
@@ -90,15 +86,14 @@ function JournalWorkspace() {
     <div className="space-y-md">
       <Panel title="Paper journal" badge="PAPER · NO REAL FUNDS" badgeVariant="warning">
         <div className="space-y-sm">
-          <PaperSignIn />
           <p className="text-xs text-tertiary">
             Every paper trade is priced at the live venue price when you place it, then marked live. DeepBook Predict windows settle on-chain
-            within minutes, so their results are real. Your journal is saved in this browser for the signed-in wallet.
+            within minutes, so their results are real. Your journal is saved in this browser; no wallet needed.
           </p>
         </div>
       </Panel>
 
-      {!address ? null : (
+      {(
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-sm">
             <StatCard label="Open positions" value={open.length} subtext={`${usd(open.reduce((s, t) => s + t.cost, 0))} at cost`} />
@@ -228,7 +223,7 @@ function JournalWorkspace() {
                   />
                 </label>
 
-                <CopySignals address={address} />
+                <CopySignals />
                 <p className="text-[10px] text-quaternary">
                   Copies take the same BTC window and direction at its reference strike, priced live. Only DeepBook Predict trades are visible
                   on-chain per wallet.
@@ -332,8 +327,6 @@ function JournalWorkspace() {
 
 export default function PickJournalPage() {
   return (
-    <SuiWalletScope>
-      <JournalWorkspace />
-    </SuiWalletScope>
+    <JournalWorkspace />
   )
 }

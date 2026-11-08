@@ -7,7 +7,7 @@ import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { usePredictFlow } from '../lib/predictFlow'
 import PredictFlowView from './PredictFlowView'
 import CopySignals from './journal/CopySignals'
-import { useJournal, usePaperSession } from '../lib/paperJournal'
+import { useJournal } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
 interface CrowdedTrade {
@@ -38,16 +38,11 @@ export default function CrowdedTradesPanel() {
   const [groups, setGroups] = useState<CrowdedTrade[] | null>(null)
   const { flow, error: flowError } = usePredictFlow()
   const { showToast } = useApp()
-  const { session } = usePaperSession()
-  const { journal, paperBuy } = useJournal(session?.address)
+  const { journal, paperBuy } = useJournal()
   const [buying, setBuying] = useState<string | null>(null)
 
   // One-click paper trade from a suggestion; sizes use the journal's copy size.
   const paperFrom = async (key: string, order: { market: string; outcome: string }, label: string) => {
-    if (!session) {
-      showToast('Sign in on the Journal page to paper trade.')
-      return navigate('/journal')
-    }
     setBuying(key)
     try {
       const t = await paperBuy({ ...order, amount: journal.copySize }, { kind: 'dashboard', label })
@@ -120,16 +115,7 @@ export default function CrowdedTradesPanel() {
           />
           <div className="px-md pb-md space-y-xs">
             <div className="text-quaternary uppercase text-[11px] font-semibold font-mono">Your copy signals</div>
-            {session ? (
-              <CopySignals address={session.address} limit={4} />
-            ) : (
-              <p className="text-xs text-tertiary">
-                <button onClick={() => navigate('/journal')} className="text-brand-primary hover:underline">
-                  Sign in on the Journal
-                </button>{' '}
-                to track wallets and copy their trades on paper.
-              </p>
-            )}
+            <CopySignals limit={4} />
           </div>
         </>
       ) : groups === null ? (
@@ -205,18 +191,6 @@ export default function CrowdedTradesPanel() {
                 </span>
                 <span>last {formatTimeAgo(g.lastTradeAt)}</span>
               </div>
-              {g.side === 'buy' && (
-                <button
-                  onClick={e => {
-                    e.stopPropagation()
-                    paperFrom(`${g.eventId}-${g.outcomeId}`, { market: g.slug, outcome: g.outcomeId }, `${g.walletCount} tracked wallets (demo)`)
-                  }}
-                  disabled={buying === `${g.eventId}-${g.outcomeId}`}
-                  className="w-full rounded bg-brand-solid px-sm py-xxs text-[11px] font-bold text-primary-on-brand hover:bg-brand-solid-hover disabled:opacity-50"
-                >
-                  {buying === `${g.eventId}-${g.outcomeId}` ? 'Placing…' : `Paper buy ${g.outcomeLabel} $${journal.copySize}`}
-                </button>
-              )}
             </div>
           ))}
         </div>

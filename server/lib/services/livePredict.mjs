@@ -52,7 +52,7 @@ const WATERX_CATEGORY = { finance: 'macro', tech: 'culture', crypto: 'crypto', s
 // Event list: the top two options of each event, enough for a market board.
 export function listWaterxEvents() {
   return cached('wx:list', LIST_TTL_MS, async () => {
-    const { events } = await waterx('/predict/events?limit=100')
+    const { events } = await waterx('/predict/events?limit=200')
     return events
       .filter(e => e.settlesAt * 1000 > Date.now())
       .map(e => ({
@@ -66,6 +66,59 @@ export function listWaterxEvents() {
         url: 'https://waterx.app/en/predict',
         preview: e.preview.map(p => ({ id: p.code, label: p.name, price: round4(p.yesCents / 100) }))
       }))
+  })
+}
+
+// Standalone WaterX markets from its feed: sport matches and recurring crypto up/down rounds.
+// Each round is its own market id, so a position never gets marked against the next round.
+const FEED_TTL_MS = 30_000
+const FEED_TYPES = new Set(['sport-match', 'crypto-updown'])
+const FEED_PHASES = new Set(['open', 'live', 'scheduled'])
+const ROUND_MIN_LEFT_MS = 30_000
+
+function feedMarket(item) {
+  const m = item.market
+  const r = item.round
+  if (!FEED_TYPES.has(m?.type) || !FEED_PHASES.has(r?.phase)) return null
+  if (r.sides?.length !== 2 || r.sides.some(side => side.oddsCents == null)) return null
+  if (r.endsAt * 1000 < Date.now() + ROUND_MIN_LEFT_MS) return null
+
+  const d = m.display ?? {}
+  const sport = m.type === 'sport-match'
+  const label = side => (sport ? (side.key === 'teamA' ? d.teamA?.name : d.teamB?.name) : side.key === 'up' ? 'Up' : 'Down') ?? side.key
+  // Two-sided: an outcome's bid is 1 − the other side's ask.
+  const outcome = (side, other) => {
+    const ask = round4(side.oddsCents / 100)
+    const bid = round4(Math.max(0, 1 - other.oddsCents / 100))
+    return { id: side.key, label: label(side), ask, bid, mid: round4((ask + bid) / 2) }
+  }
+  const [a, b] = r.sides
+  return {
+    id: `wxm:${m.slug}~${r.id}`,
+    slug: `wxm:${m.slug}~${r.id}`,
+    venueId: 'waterx',
+    kind: m.type,
+    title: sport
+      ? `${d.teamA?.name ?? 'Team A'} vs ${d.teamB?.name ?? 'Team B'}${d.league ? ` · ${d.league}` : ''}`
+      : `${String(d.ticker ?? '').replace(/USD$/, '')} up or down · ${d.recurrence ?? ''}`.trim(),
+    category: sport ? 'sports' : 'crypto',
+    volumeUsd: Math.round(r.volumeUsd ?? 0),
+    inPlay: r.phase === 'live',
+    anchorPrice: r.anchorPrice ?? null,
+    settlesAt: new Date(r.endsAt * 1000).toISOString(),
+    url: 'https://waterx.app/en/predict',
+    outcomes: [outcome(a, b), outcome(b, a)],
+    fetchedAt: new Date().toISOString()
+  }
+}
+
+export function listWaterxFeedMarkets() {
+  return cached('wx:feed', FEED_TTL_MS, async () => {
+    const { items } = await waterx('/predict/feed?locale=en&limit=1000')
+    return items
+      .map(feedMarket)
+      .filter(Boolean)
+      .sort((x, y) => Date.parse(x.settlesAt) - Date.parse(y.settlesAt))
   })
 }
 
@@ -164,6 +217,11 @@ export function listDeepbookMarkets() {
 
 export async function getLiveMarket(id) {
   if (id.startsWith('wx:')) return getWaterxEvent(id.slice(3))
+  if (id.startsWith('wxm:')) {
+    const market = (await listWaterxFeedMarkets()).find(m => m.id === id)
+    if (!market) throw new LiveDataError('This WaterX round has closed. Pick another market.', 410)
+    return market
+  }
   if (id.startsWith('dbp:')) {
     const market = (await listDeepbookMarkets()).find(m => m.id === id)
     if (!market) throw new LiveDataError('This DeepBook Predict window has closed. Pick a newer one.', 410)
@@ -172,4 +230,4 @@ export async function getLiveMarket(id) {
   return null
 }
 
-export const isLiveMarketId = id => typeof id === 'string' && (id.startsWith('wx:') || id.startsWith('dbp:'))
+export const isLiveMarketId = id => typeof id === 'string' && /^(wx|wxm|dbp):/.test(id)

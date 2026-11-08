@@ -525,6 +525,28 @@ function settle(quote, { mode, signer }) {
   return { ref, trades, realizedPnl: round(realizedPnl) }
 }
 
+// Closes a vault position outright: sells every held share into the book on its venue. Reduce-only,
+// so the agent's per-trade, budget and slippage limits (which guard new risk) don't apply.
+export function closeAgentPosition(id) {
+  const position = serverStore.userPositions.find(p => p.id === id)
+  if (!position) throw new TradeError('Position not found.', 404)
+  const event = findEvent(position.eventId ?? position.marketSlug)
+  if (!event) throw new TradeError('This market is no longer available.', 410)
+  const quote = computeTradeQuote({
+    market: event.id,
+    outcome: position.outcomeId,
+    side: 'sell',
+    amount: position.shares,
+    venue: position.venueId,
+    mode: 'direct'
+  })
+  if (!quote.totalShares) throw new TradeError('No bids to close against right now. Try again shortly.')
+  const result = settle(quote, { mode: 'agent' })
+  const wallet = agentState()
+  wallet.balanceUSDC = round(wallet.balanceUSDC + quote.proceeds)
+  return { ...result, shares: quote.totalShares, proceeds: quote.proceeds, avgPrice: quote.avgFillPrice }
+}
+
 export function executeAgentOrder(input) {
   const quote = computeTradeQuote({ ...input, mode: 'agent' })
   if (!quote.executable) throw new TradeError(quote.notExecutableReason)

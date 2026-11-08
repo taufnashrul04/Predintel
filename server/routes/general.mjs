@@ -9,6 +9,7 @@ import { TradeError, executeAgentOrder } from '../lib/services/trading.mjs'
 import { LiveDataError, getLivePrices } from '../lib/services/suiLive.mjs'
 import { loadLiveMarket } from './trade.mjs'
 import { getPredictFlow } from '../lib/services/predictFlow.mjs'
+import { WHALE_MIN_USD, getWhaleTape } from '../lib/services/whaleFeed.mjs'
 
 const router = Router()
 
@@ -30,9 +31,15 @@ router.get('/movers', (_req, res) => {
 })
 
 // Whale Trades
-router.get('/whales', (_req, res) => {
-  const whaleTrades = MOCK_TRADES.filter(t => t.notional >= 15000).slice(0, 30)
-  res.json(whaleTrades)
+router.get('/whales', async (req, res) => {
+  const minUsd = Math.max(1000, Math.min(1_000_000, Number(req.query.min) || WHALE_MIN_USD))
+  try {
+    res.json(await getWhaleTape({ minUsd }))
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[whales]', err)
+    res.status(500).json({ error: 'Unexpected error loading the whale tape.' })
+  }
 })
 
 // Crowded trades: many tracked wallets on the same side of the same outcome.

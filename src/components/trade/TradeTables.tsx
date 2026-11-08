@@ -4,6 +4,8 @@ import { VENUE_MAP } from '../../lib/config/venues'
 import { formatTimeAgo } from '../../lib/formatters'
 import { useApp } from '../../context/AppContext'
 import { OpenOrder, Position, TradeRecord, apiJson, cents, shortAddr, usd } from './types'
+import { useJournal, usePaperMarks } from '../../lib/paperJournal'
+import { FlashValue } from '../motion'
 
 type Tab = 'positions' | 'orders' | 'history'
 
@@ -29,11 +31,36 @@ export default function TradeTables({
   positions: Position[]
   orders: OpenOrder[]
   history: TradeRecord[]
-  onClosePosition: (p: Position) => void
+  onClosePosition: (p: Position) => Promise<void>
   onChange: () => void
 }) {
   const { showToast } = useApp()
   const [tab, setTab] = useState<Tab>('positions')
+  const [closing, setClosing] = useState<string | null>(null)
+  const { journal, closeTrade, applySettlements } = useJournal()
+  const paperOpen = journal.trades.filter(t => t.status === 'open')
+  const marks = usePaperMarks(journal.trades, applySettlements)
+
+  const closePaper = async (id: string) => {
+    setClosing(id)
+    try {
+      await closeTrade(id)
+      showToast('Paper position closed at the live bid')
+    } catch (err: any) {
+      showToast(err.message)
+    } finally {
+      setClosing(null)
+    }
+  }
+
+  const closeVault = async (p: Position) => {
+    setClosing(p.id)
+    try {
+      await onClosePosition(p)
+    } finally {
+      setClosing(null)
+    }
+  }
 
   const cancel = async (id: string) => {
     try {
@@ -46,7 +73,7 @@ export default function TradeTables({
   }
 
   const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: 'positions', label: 'Positions', count: positions.length },
+    { id: 'positions', label: 'Positions', count: positions.length + paperOpen.length },
     { id: 'orders', label: 'Open orders', count: orders.length },
     { id: 'history', label: 'Trade history', count: history.length }
   ]
@@ -71,9 +98,65 @@ export default function TradeTables({
 
       <Panel noPadding>
         <div className="overflow-x-auto">
+          {tab === 'positions' && paperOpen.length > 0 && (
+            <>
+              <div className="px-sm py-xs bg-secondary border-b border-secondary text-[11px] uppercase font-semibold text-quaternary">
+                Paper · live prices
+              </div>
+              <table className="w-full text-left text-xs font-mono">
+                <thead>
+                  <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold">
+                    <th className={th}>Market</th>
+                    <th className={th}>Outcome</th>
+                    <th className={th}>Venue</th>
+                    <th className={th}>Shares</th>
+                    <th className={th}>Entry</th>
+                    <th className={th}>Mark</th>
+                    <th className={th}>Unrealized PnL</th>
+                    <th className={`${th} text-right`}>Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-secondary">
+                  {paperOpen.map(t => {
+                    const m = marks[t.id]
+                    const pnl = m?.mark != null ? m.mark * t.shares - t.cost : null
+                    return (
+                      <tr key={t.id} className="hover:bg-secondary-hover">
+                        <td className={`${td} font-sans font-medium text-primary`}>{t.marketTitle}</td>
+                        <td className={`${td} font-bold`}>{t.outcomeLabel}</td>
+                        <td className={td}><Venue id={t.venueId} /></td>
+                        <td className={td}>{t.shares.toLocaleString('en-US')}</td>
+                        <td className={td}>{cents(t.entryPrice)}</td>
+                        <td className={td}>
+                          {m?.status === 'awaiting' ? <span className="text-utility-warning-700">settling…</span> : <FlashValue value={m?.mark}>{cents(m?.mark)}</FlashValue>}
+                        </td>
+                        <td className={`${td} font-bold ${pnl == null ? 'text-quaternary' : pnl >= 0 ? 'text-utility-success-700' : 'text-utility-error-700'}`}>
+                          {pnl == null ? '—' : `${pnl >= 0 ? '+' : '-'}${usd(Math.abs(pnl))}`}
+                        </td>
+                        <td className={`${td} text-right`}>
+                          <button
+                            onClick={() => closePaper(t.id)}
+                            disabled={closing === t.id || m?.status === 'awaiting'}
+                            className="px-sm py-xxs rounded bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 font-bold disabled:opacity-50"
+                          >
+                            {closing === t.id ? 'Closing…' : 'Close'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </>
+          )}
+          {tab === 'positions' && positions.length > 0 && (
+            <div className="px-sm py-xs bg-secondary border-y border-secondary text-[11px] uppercase font-semibold text-quaternary">
+              Agent vault (simulated)
+            </div>
+          )}
           {tab === 'positions' &&
             (positions.length === 0 ? (
-              <Empty text="No open positions yet. Fill an order to see it here." />
+              paperOpen.length === 0 && <Empty text="No open positions yet. Place a paper order to see it here." />
             ) : (
               <table className="w-full text-left text-xs font-mono">
                 <thead>
@@ -102,10 +185,11 @@ export default function TradeTables({
                       </td>
                       <td className={`${td} text-right`}>
                         <button
-                          onClick={() => onClosePosition(p)}
-                          className="px-sm py-xxs rounded bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 font-bold"
+                          onClick={() => closeVault(p)}
+                          disabled={closing === p.id}
+                          className="px-sm py-xxs rounded bg-secondary hover:bg-utility-error-50 hover:text-utility-error-700 font-bold disabled:opacity-50"
                         >
-                          Close
+                          {closing === p.id ? 'Closing…' : 'Close'}
                         </button>
                       </td>
                     </tr>

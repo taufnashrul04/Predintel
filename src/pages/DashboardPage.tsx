@@ -25,6 +25,7 @@ import { Panel, StatCard, VenuePill, ChangeBadge } from '../components/SharedUI'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import CrowdedTradesPanel from '../components/CrowdedTradesPanel'
+import WhaleTape, { useWhaleTape } from '../components/WhaleTape'
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<any>({
@@ -38,7 +39,7 @@ export default function DashboardPage() {
   })
   const [divergences, setDivergences] = useState<any[]>([])
   const [movers, setMovers] = useState<any[]>([])
-  const [whales, setWhales] = useState<any[]>([])
+  const { tape: whaleTape, error: whaleError } = useWhaleTape()
   const [memories, setMemories] = useState<any[]>([])
   const navigate = useNavigate()
 
@@ -47,13 +48,11 @@ export default function DashboardPage() {
       fetch('/api/stats').then(r => r.json()),
       fetch('/api/divergence').then(r => r.json()),
       fetch('/api/movers').then(r => r.json()),
-      fetch('/api/whales').then(r => r.json()),
       fetch('/api/memory').then(r => r.json())
-    ]).then(([s, d, m, w, mem]) => {
+    ]).then(([s, d, m, mem]) => {
       setStats(s || {})
       setDivergences(Array.isArray(d) ? d : [])
       setMovers(Array.isArray(m) ? m : [])
-      setWhales(Array.isArray(w) ? w : [])
       setMemories(Array.isArray(mem) ? mem : [])
     }).catch(console.error)
   }, [])
@@ -109,8 +108,8 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Whale Trades 24h"
-          value={stats.whaleTradesCount}
-          subtext="≥ $15,000 notional"
+          value={whaleTape ? `${whaleTape.count24h}${whaleTape.count24hCapped ? '+' : ''}` : '…'}
+          subtext={whaleTape ? `≥ ${formatMoney(whaleTape.minUsd)} · ${formatMoney(whaleTape.volume24h)} live` : 'loading live trades'}
         />
         <StatCard
           label="Walrus Memories"
@@ -284,51 +283,7 @@ export default function DashboardPage() {
 
       {/* Whale Tape & Venue Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">
-        <Panel
-          title="Whale Tape (Live Orders)"
-          badge="≥ $15K NOTIONAL"
-          badgeVariant="brand"
-          actions={<span className="w-2 h-2 rounded-full bg-utility-success-700 animate-ping" />}
-        >
-          <div className="space-y-xs overflow-y-auto max-h-80">
-            {whales.slice(0, 7).map((t: any) => {
-              const venue = VENUE_MAP.get(t.venueId)
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => navigate(`/wallets/${t.wallet}`)}
-                  className="p-xs bg-secondary hover:bg-secondary-hover transition-colors rounded-lg border border-secondary text-xs flex items-center justify-between cursor-pointer"
-                >
-                  <div className="flex items-center gap-xs">
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: venue?.color || '#38BDF8' }}
-                      title={venue?.name}
-                    />
-                    <div>
-                      <div className="font-mono text-secondary hover:text-primary">
-                        {t.wallet.slice(0, 6)}…{t.wallet.slice(-4)}
-                      </div>
-                      <span
-                        className={`text-[10px] font-bold ${
-                          t.side === 'buy' ? 'text-utility-success-700' : 'text-utility-error-700'
-                        }`}
-                      >
-                        {t.side.toUpperCase()} {t.outcomeId.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right font-mono">
-                    <div className="font-bold text-primary">{formatMoney(t.notional)}</div>
-                    <div className="text-quaternary text-[11px]">
-                      @ {(t.price * 100).toFixed(1)}¢ · {formatTimeAgo(t.t)}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </Panel>
+        <WhaleTape tape={whaleTape} error={whaleError} />
 
         <Panel
           title="14-Day Trading Volume By Venue ($M)"

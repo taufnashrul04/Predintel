@@ -3,8 +3,7 @@ import { FlashValue } from '../motion'
 import { Zap, PenLine, AlertCircle } from 'lucide-react'
 import { Panel } from '../SharedUI'
 import { useApp } from '../../context/AppContext'
-import PaperSignIn from '../journal/PaperSignIn'
-import { useJournal, usePaperSession } from '../../lib/paperJournal'
+import { useJournal } from '../../lib/paperJournal'
 import {
   AgentWallet,
   ExecutionStatus,
@@ -46,8 +45,9 @@ function PreviewRow({ label, value, tone }: { label: string; value: React.ReactN
 
 export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, setTicket, agentWallet, onExecuted, live, priceVersion }: Props) {
   const { showToast } = useApp()
-  const { session } = usePaperSession()
-  const { paperBuy } = useJournal(session?.address)
+  const { journal, paperBuy, closeTrade } = useJournal()
+  // Paper positions this ticket can close: same market and outcome, still open.
+  const paperOpen = journal.trades.filter(t => t.status === 'open' && t.market === market.id && t.outcomeId === outcomeId)
   const isPaper = ticket.mode === 'direct'
 
   const [quote, setQuote] = useState<TradeQuote | null>(null)
@@ -145,7 +145,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
   }
 
   const execute = async () => {
-    if (!quote) return
+    if (!quote && !paperClosing) return
     setConfirmOpen(false)
     const order = {
       market: market.id,
@@ -156,7 +156,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
       limitPrice: ticket.type === 'limit' ? Number(ticket.limitPrice) : undefined,
       split: ticket.split
     }
-    const base = { mode: ticket.mode, venues: legsLabel, amount: order.amount, shares: quote.totalShares }
+    const base = { mode: ticket.mode, venues: legsLabel, amount: order.amount, shares: quote?.totalShares ?? 0 }
 
     try {
       if (ticket.mode === 'agent') {
@@ -167,8 +167,13 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
         return
       }
 
-      if (!session) throw new Error('Sign in with your Sui wallet to place paper orders.')
       setExecution({ ...base, status: 'pending' })
+      if (ticket.side === 'sell') {
+        for (const t of paperOpen) await closeTrade(t.id)
+        setExecution({ ...base, status: 'confirmed', simulated: true })
+        showToast(`Closed ${paperOpen.length} paper position${paperOpen.length > 1 ? 's' : ''} at the live bid`)
+        return
+      }
       const trade = await paperBuy({ market: market.id, outcome: outcomeId, amount: order.amount }, { kind: 'trade' })
       setExecution({ ...base, venues: legsLabel, shares: trade.shares, status: 'confirmed', ref: trade.id, simulated: true })
       showToast(`Paper ${trade.outcomeLabel}: ${trade.shares} sh @ ${(trade.entryPrice * 100).toFixed(1)}¢ added to your journal`)
@@ -179,15 +184,21 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     }
   }
 
-  const paperNeedsSignIn = isPaper && !session
   const paperWarning = !isPaper
     ? null
-    : ticket.side === 'sell'
-    ? 'Close paper positions from the Journal; paper orders here are buys.'
+    : !live
+    ? 'Paper trading uses live markets only. Pick one from the Live list.'
+    : ticket.side === 'sell' && paperOpen.length === 0
+    ? `You have no open paper ${outcomeLabel} position on this market.`
     : ticket.type === 'limit'
     ? 'Paper orders fill at the live price. Switch to Market.'
     : null
-  const canSubmit = Boolean(quote?.executable) && !quoteLoading && !busy && !agentWarning && !paperWarning
+  // A paper sell closes browser-held positions, so the server's quote (which can't see them) doesn't gate it.
+  const paperClosing = isPaper && ticket.side === 'sell'
+  const shownQuoteError = paperClosing ? null : quoteError
+  const canSubmit = paperClosing
+    ? paperOpen.length > 0 && !busy && !paperWarning
+    : Boolean(quote?.executable) && !quoteLoading && !busy && !agentWarning && !paperWarning
 
   return (
     <Panel title="Order ticket" badge={ticket.mode === 'agent' ? 'AGENT · SUI' : 'PAPER · JOURNAL'} badgeVariant="brand">
@@ -202,7 +213,10 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
         </div>
 
         {ticket.mode === 'direct' ? (
-          <PaperSignIn compact />
+          <div className="p-xs bg-secondary rounded border border-secondary text-quaternary font-sans">
+            Paper trading at live prices, saved in this browser. No wallet needed.
+            {paperOpen.length > 0 && ` You hold ${paperOpen.reduce((s, t) => s + t.shares, 0).toLocaleString('en-US')} paper ${outcomeLabel} shares here.`}
+          </div>
         ) : (
           agentLimits && (
             <div className="p-xs bg-secondary rounded border border-secondary text-quaternary">
@@ -364,18 +378,15 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
           </div>
         )}
 
-        {(quoteError || quote?.notExecutableReason || agentWarning || paperWarning) && (
+        {(shownQuoteError || (!paperClosing && quote?.notExecutableReason) || agentWarning || paperWarning) && (
           <div className="flex gap-xs p-xs bg-utility-warning-50 border border-utility-warning-200 text-utility-warning-700 rounded font-sans">
             <AlertCircle className="size-4 shrink-0" />
-            <span>{paperWarning || quoteError || agentWarning || quote?.notExecutableReason}</span>
+            <span>{paperWarning || shownQuoteError || agentWarning || quote?.notExecutableReason}</span>
           </div>
         )}
 
-        {paperNeedsSignIn ? (
-          <p className="text-center text-tertiary font-sans">Sign in above to place paper orders.</p>
-        ) : (
-          <button
-            onClick={() => setConfirmOpen(true)}
+        <button
+            onClick={() => (paperClosing ? execute() : setConfirmOpen(true))}
             disabled={!canSubmit}
             className="pi-sheen w-full inline-flex items-center justify-center gap-sm rounded-lg border border-transparent bg-brand-solid px-lg py-sm text-sm font-semibold text-primary-on-brand hover:bg-brand-solid-hover disabled:opacity-50"
           >
@@ -386,9 +397,10 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
                 : 'Submitting…'
               : ticket.mode === 'agent'
               ? 'Review agent order'
+              : paperClosing
+              ? 'Close paper position at live bid'
               : 'Review paper order'}
           </button>
-        )}
 
         {execution && (
           <div className="p-xs bg-primary border border-secondary rounded-lg space-y-xxs" aria-live="polite">
@@ -435,7 +447,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
                 <PreviewRow label="Fills on" value={legsLabel || '—'} />
                 <PreviewRow label="Avg price · shares" value={`${cents(quote.avgFillPrice)} · ${quote.totalShares}`} />
                 <PreviewRow label="Fees" value={usd(quote.totalFees)} />
-                <PreviewRow label="Mode" value={ticket.mode === 'agent' ? 'Agent vault (x402 · Sui)' : `Paper journal ${session ? shortAddr(session.address) : ''}`} />
+                <PreviewRow label="Mode" value={ticket.mode === 'agent' ? 'Agent vault (x402 · Sui)' : 'Paper journal (this browser)'} />
               </div>
               {ticket.mode === 'direct' && (
                 <p className="mt-sm text-tertiary font-sans">Paper trade at the live price. No funds move; it is recorded in your journal.</p>
