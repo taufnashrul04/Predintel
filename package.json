@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --env-file-if-exists=.env server/index.mjs"
+    "dev": "node --env-file-if-exists=.env server/index.mjs",
+    "build": "vite build"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.6",
@@ -29,5 +30,8 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -101,6 +101,14 @@ TATUM_API_KEY=your_key
 
 ---
 
+## Deploying to Vercel
+
+- `vercel.json` builds the frontend with `npm run build` (static `dist/`) and rewrites every `/api/*` request to one serverless function, `api/index.mjs`, which exports the same Express app the dev server uses (`server/app.mjs`). Other paths fall back to `index.html` for client-side routing.
+- Set `TATUM_API_KEY` in **Project → Settings → Environment Variables** (the `.env` file is not deployed).
+- Serverless instances don't share memory: the simulated agent vault and server caches reset per instance, and the background owner scan for on-chain traders may take a few requests to fill in. The paper journal lives in the browser and is unaffected.
+
+---
+
 ## Paper Journal
 
 - **No wallet needed.** Paper trades are saved in the browser (one journal per browser); the server only prices and marks.
