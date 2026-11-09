@@ -10,8 +10,21 @@ import { LiveDataError, getLivePrices } from '../lib/services/suiLive.mjs'
 import { loadLiveMarket } from './trade.mjs'
 import { getPredictFlow } from '../lib/services/predictFlow.mjs'
 import { WHALE_MIN_USD, getWhaleTape } from '../lib/services/whaleFeed.mjs'
+import { getLiveDivergence } from '../lib/services/liveDivergence.mjs'
 
 const router = Router()
+
+// Live divergence: WaterX vs the same market on Polymarket.
+router.get('/divergence/live', async (req, res) => {
+  const minGapPp = Math.max(0, Math.min(50, Number(req.query.min) || 0.5))
+  try {
+    res.json(await getLiveDivergence({ minGapPp }))
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[divergence/live]', err)
+    res.status(500).json({ error: 'Unexpected error loading live divergence.' })
+  }
+})
 
 // Divergence
 router.get('/divergence', (req, res) => {

@@ -31,6 +31,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [unreadAlerts, setUnreadAlerts] = useState(0)
   const [memoryCount, setMemoryCount] = useState(5)
   const [liveMarketCount, setLiveMarketCount] = useState<number | null>(null)
+  const [liveDivergenceCount, setLiveDivergenceCount] = useState<number | null>(null)
   const navigate = useNavigate()
   const location = useLocation()
   useSpotlight()
@@ -74,6 +75,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         .catch(() => {})
     load()
     const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Live WaterX × Polymarket divergences of 1pp or more, for the sidebar badge.
+  useEffect(() => {
+    const load = () =>
+      fetch('/api/divergence/live?min=1')
+        .then(r => r.json())
+        .then(d => Array.isArray(d.rows) && setLiveDivergenceCount(d.rows.length))
+        .catch(() => {})
+    load()
+    const t = setInterval(load, 120_000)
     return () => clearInterval(t)
   }, [])
 
@@ -258,7 +271,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <span>Divergence</span>
               </div>
               <span className="text-xs bg-utility-warning-50 text-utility-warning-700 px-xs rounded font-bold font-mono">
-                4 Live
+                {liveDivergenceCount ?? '…'} Live
               </span>
             </NavLink>
 

@@ -58,6 +58,7 @@ export function listWaterxEvents() {
       .map(e => ({
         id: `wx:${e.slug}`,
         slug: `wx:${e.slug}`,
+        eventId: e.id,
         venueId: 'waterx',
         title: e.title,
         category: WATERX_CATEGORY[e.category] ?? e.category,
@@ -112,9 +113,14 @@ function feedMarket(item) {
   }
 }
 
+// The raw feed (every WaterX market with its current round), shared by the boards and the divergence scanner.
+export function getWaterxFeedItems() {
+  return cached('wx:feed-raw', FEED_TTL_MS, async () => (await waterx('/predict/feed?locale=en&limit=1000')).items)
+}
+
 export function listWaterxFeedMarkets() {
   return cached('wx:feed', FEED_TTL_MS, async () => {
-    const { items } = await waterx('/predict/feed?locale=en&limit=1000')
+    const items = await getWaterxFeedItems()
     return items
       .map(feedMarket)
       .filter(Boolean)
