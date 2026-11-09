@@ -313,7 +313,7 @@ export default function TerminalConsole() {
 
   return (
     <div
-      className="pi-console fixed left-0 right-0 bottom-14 md:bottom-0 md:left-56 z-40 h-[46vh] md:h-[40vh] flex flex-col border-t border-brand bg-primary shadow-2xl font-mono text-xs"
+      className="pi-console fixed left-0 right-0 bottom-14 md:bottom-0 md:left-[var(--pi-sidebar-w,14rem)] z-40 h-[46vh] md:h-[40vh] flex flex-col border-t border-brand bg-primary shadow-2xl font-mono text-xs"
       role="dialog"
       aria-label="PredictIntel terminal"
       onClick={() => inputRef.current?.focus()}

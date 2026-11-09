@@ -77,15 +77,31 @@ function parseOrder(input) {
   const mode = input.mode === 'agent' ? 'agent' : 'direct'
   const split = input.split === true || input.split === 'true'
   const venueId = input.venue ?? input.venueId ?? null
+  // Clients that keep positions themselves (the browser-held agent vault) pass the shares they hold
+  // and the venues they allow, since a serverless backend keeps no positions between requests.
+  let held = null
+  if (input.held != null && input.held !== '') {
+    held = Number(input.held)
+    if (!Number.isFinite(held) || held < 0) throw new TradeError('Held shares must be a positive number.')
+  }
+  const allowed = input.allowed ? String(input.allowed).split(',').filter(Boolean) : null
   if (venueId && !VENUE_MAP.has(venueId)) throw new TradeError(`Venue '${venueId}' is not recognized.`)
 
-  return { event, outcome, side, amount, type, limitPrice, mode, split, venueId }
+  return { event, outcome, side, amount, type, limitPrice, mode, split, venueId, held, allowed }
 }
 
 function positionMatches(p, event, outcomeId, venueId) {
   const sameEvent = p.eventId === event.id || p.marketSlug === event.slug
   return sameEvent && p.outcomeId === outcomeId && (!venueId || p.venueId === venueId)
 }
+
+// Shares available to sell on a venue: the client's own count when it sent one, else the server store.
+function heldFor(order, venueId) {
+  if (order.held != null) return !order.venueId || order.venueId === venueId ? order.held : 0
+  return heldShares(order.event, order.outcome.id, venueId)
+}
+
+const allowedFor = order => order.allowed ?? agentState().rules.allowedVenues
 
 function heldShares(event, outcomeId, venueId) {
   return serverStore.userPositions
@@ -109,11 +125,11 @@ function candidateVenues(order) {
     if (venues.length === 0) throw new TradeError('Orders can only be placed on WaterX or DeepBook.')
   }
   if (mode === 'agent') {
-    const allowed = agentState().rules.allowedVenues
+    const allowed = allowedFor(order)
     venues = venues.filter(v => allowed.includes(v.id))
     if (venues.length === 0) throw new TradeError("The agent rules don't allow any Sui venue that lists this market.")
   }
-  if (side === 'sell') venues = venues.filter(v => heldShares(event, outcome.id, v.id) > 0)
+  if (side === 'sell') venues = venues.filter(v => heldFor(order, v.id) > 0)
   if (venues.length === 0) throw new TradeError(`You don't hold ${outcome.label} shares on WaterX or DeepBook for this market.`)
   return venues
 }
@@ -147,7 +163,7 @@ function quoteVenue(order, venue) {
   const rate = feeRateFor(venue)
   const levels = bookSide(event.id, venue.id, outcome.id, side)
   const budget = side === 'buy' ? amount / (1 + rate) : amount
-  const maxShares = side === 'sell' ? heldShares(event, outcome.id, venue.id) : null
+  const maxShares = side === 'sell' ? heldFor(order, venue.id) : null
   const fill = walkLevels(levels, { side, budget, limitPrice, maxShares })
   const topPrice = levels[0]?.price ?? null
   const avgPrice = fill.shares > 0 ? fill.notional / fill.shares : topPrice
@@ -181,7 +197,7 @@ function splitFill(order, venues) {
     )
     .sort((a, b) => (side === 'buy' ? a.price - b.price : b.price - a.price))
 
-  const held = side === 'sell' ? Object.fromEntries(venues.map(v => [v.id, heldShares(event, outcome.id, v.id)])) : null
+  const held = side === 'sell' ? Object.fromEntries(venues.map(v => [v.id, heldFor(order, v.id)])) : null
   const alloc = new Map()
   let spent = 0
   for (const level of merged) {
@@ -220,14 +236,14 @@ function computeLiveQuote(order) {
   const { event, outcome, side, amount, type, limitPrice, mode } = order
   const venue = VENUE_MAP.get(event.venueId)
   if (order.venueId && order.venueId !== venue.id) throw new TradeError(`This market only trades on ${venue.name}.`)
-  if (mode === 'agent' && !agentState().rules.allowedVenues.includes(venue.id)) {
+  if (mode === 'agent' && !allowedFor(order).includes(venue.id)) {
     throw new TradeError(`The agent rules don't allow ${venue.name}.`)
   }
   if (event.settlesAt && Date.parse(event.settlesAt) < Date.now()) throw new TradeError('This market has closed.')
 
   const price = side === 'buy' ? outcome.ask : outcome.bid
   if (!(price > 0 && price < 1)) throw new TradeError(`${outcome.label} has no live ${side === 'buy' ? 'ask' : 'bid'} right now.`)
-  const held = side === 'sell' ? heldShares(event, outcome.id, venue.id) : null
+  const held = side === 'sell' ? heldFor(order, venue.id) : null
   if (side === 'sell' && !held) throw new TradeError(`You don't hold ${outcome.label} shares on ${venue.name} for this market.`)
 
   const crosses = type === 'market' || (side === 'buy' ? limitPrice >= price : limitPrice <= price)
@@ -372,7 +388,7 @@ export function computeTradeQuote(input) {
     restingAmount: order.type === 'limit' && bestExecutableRoute ? unfilledAmount : 0,
     consensusPrice: round(consensus, 4),
     consensusGapPp: round((avgFillPrice - consensus) * 100, 1),
-    heldShares: side === 'sell' ? round(heldShares(event, outcome.id)) : null,
+    heldShares: side === 'sell' ? round(order.held ?? heldShares(event, outcome.id)) : null,
     executable: Boolean(bestExecutableRoute) && (totalShares > 0 || order.type === 'limit'),
     notExecutableReason
   }

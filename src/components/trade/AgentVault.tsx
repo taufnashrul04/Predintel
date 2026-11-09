@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Zap, ChevronDown } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { formatTimeAgo } from '../../lib/formatters'
-import { AgentWallet, postJson, shortAddr, usd } from './types'
+import { usd } from './types'
+import { Vault, moveVaultFunds, setVaultRules, useVault } from '../../lib/agentVault'
 
 const SUI_VENUES = [
   { id: 'waterx', label: 'WaterX' },
@@ -12,17 +13,7 @@ const SUI_VENUES = [
 const inputClass =
   'w-full rounded-md bg-primary px-md py-xs text-sm text-primary border border-primary focus-visible:ring-2 focus-visible:ring-focus-ring font-mono'
 
-function VaultMoveModal({
-  kind,
-  wallet,
-  onClose,
-  onDone
-}: {
-  kind: 'deposit' | 'withdraw'
-  wallet: AgentWallet
-  onClose: () => void
-  onDone: () => void
-}) {
+function VaultMoveModal({ kind, wallet, onClose }: { kind: 'deposit' | 'withdraw'; wallet: Vault; onClose: () => void }) {
   const { showToast } = useApp()
   const [amount, setAmount] = useState(kind === 'deposit' ? '500' : '')
   const [error, setError] = useState<string | null>(null)
@@ -34,9 +25,8 @@ function VaultMoveModal({
     if (kind === 'withdraw' && value > wallet.balanceUSDC) return setError(`Vault only holds ${usd(wallet.balanceUSDC)}.`)
     setBusy(true)
     try {
-      await postJson(`/api/agent/${kind}`, { amount: value })
+      moveVaultFunds(kind, value)
       showToast(kind === 'deposit' ? `Deposited ${usd(value)} (simulated)` : `Withdrew ${usd(value)} (simulated)`)
-      onDone()
       onClose()
     } catch (err: any) {
       setError(err.message)
@@ -70,7 +60,7 @@ function VaultMoveModal({
           />
           {error && <p className="text-xs text-utility-error-700">{error}</p>}
           <p className="text-xs text-tertiary">
-            Vault balance {usd(wallet.balanceUSDC)}. Transfers are simulated until the vault contract is deployed on Sui.
+            Vault balance {usd(wallet.balanceUSDC)}. Simulated funds, saved in this browser.
           </p>
         </div>
         <footer className="flex justify-end gap-sm border-t border-secondary p-xl">
@@ -90,7 +80,7 @@ function VaultMoveModal({
   )
 }
 
-function RulesEditor({ wallet, onSaved }: { wallet: AgentWallet; onSaved: () => void }) {
+function RulesEditor({ wallet }: { wallet: Vault }) {
   const { showToast } = useApp()
   const [form, setForm] = useState({
     maxPerTrade: String(wallet.rules.maxPerTrade),
@@ -114,7 +104,7 @@ function RulesEditor({ wallet, onSaved }: { wallet: AgentWallet; onSaved: () => 
     if (form.allowedVenues.length === 0) return setError('Allow at least one Sui venue.')
     setBusy(true)
     try {
-      await postJson('/api/agent/rules', {
+      setVaultRules({
         maxPerTrade: Number(form.maxPerTrade),
         dailyBudget: Number(form.dailyBudget),
         maxSlippagePct: Number(form.maxSlippagePct),
@@ -122,7 +112,6 @@ function RulesEditor({ wallet, onSaved }: { wallet: AgentWallet; onSaved: () => 
       })
       setError(null)
       showToast('Agent rules saved')
-      onSaved()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -186,7 +175,8 @@ function RulesEditor({ wallet, onSaved }: { wallet: AgentWallet; onSaved: () => 
       </div>
       <div className="space-y-xxs">
         <span className="text-quaternary block text-[11px] uppercase">Recent agent activity</span>
-        {wallet.activityLog.slice(0, 4).map(a => (
+        {wallet.activity.length === 0 && <p className="text-quaternary">No activity yet.</p>}
+        {wallet.activity.slice(0, 4).map(a => (
           <div key={a.id} className="flex items-center justify-between gap-sm border-b border-secondary py-xxs">
             <span className="truncate text-primary">{a.details}</span>
             <span className="shrink-0 text-quaternary">{formatTimeAgo(a.time)}</span>
@@ -197,13 +187,10 @@ function RulesEditor({ wallet, onSaved }: { wallet: AgentWallet; onSaved: () => 
   )
 }
 
-export default function AgentVault({ wallet, onChange }: { wallet: AgentWallet | null; onChange: () => void }) {
+export default function AgentVault() {
+  const wallet = useVault()
   const [rulesOpen, setRulesOpen] = useState(false)
   const [modal, setModal] = useState<'deposit' | 'withdraw' | null>(null)
-
-  if (!wallet) {
-    return <div className="h-20 rounded-xl border border-secondary pi-shimmer" />
-  }
 
   const spentPct = Math.min(100, (wallet.spentToday / wallet.rules.dailyBudget) * 100)
 
@@ -219,7 +206,7 @@ export default function AgentVault({ wallet, onChange }: { wallet: AgentWallet |
               <span className="text-xs font-bold text-primary">Agent vault (x402 · Sui)</span>
               <span className="text-[10px] px-xs rounded bg-secondary text-quaternary font-mono">SIMULATED</span>
             </div>
-            <div className="text-xs font-mono text-quaternary">{shortAddr(wallet.address)} · Sui mainnet</div>
+            <div className="text-xs font-mono text-quaternary">Simulated · saved in this browser</div>
           </div>
         </div>
 
@@ -265,8 +252,8 @@ export default function AgentVault({ wallet, onChange }: { wallet: AgentWallet |
         </div>
       </div>
 
-      {rulesOpen && <RulesEditor wallet={wallet} onSaved={onChange} />}
-      {modal && <VaultMoveModal kind={modal} wallet={wallet} onClose={() => setModal(null)} onDone={onChange} />}
+      {rulesOpen && <RulesEditor wallet={wallet} />}
+      {modal && <VaultMoveModal kind={modal} wallet={wallet} onClose={() => setModal(null)} />}
     </div>
   )
 }

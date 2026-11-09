@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense, lazy } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Activity,
@@ -17,13 +17,17 @@ import {
   Sparkles,
   Zap,
   ArrowRight,
-  TerminalSquare
+  TerminalSquare,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { VENUES } from '../lib/config/venues'
 import TickerTape from './TickerTape'
 import TerminalConsole, { toggleTerminal } from './TerminalConsole'
 import { useSpotlight } from './motion'
+
+const HeaderWallet = lazy(() => import('./HeaderWallet'))
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme, toast, cmdOpen, setCmdOpen } = useApp()
@@ -35,6 +39,80 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   useSpotlight()
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('predictintel:sidebar-collapsed') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleSidebar = () =>
+    setCollapsed(c => {
+      try {
+        localStorage.setItem('predictintel:sidebar-collapsed', c ? '0' : '1')
+      } catch {
+        // a remembered layout is a convenience
+      }
+      return !c
+    })
+
+  type NavItem = {
+    to: string
+    label: string
+    icon: React.ComponentType<{ className?: string }>
+    prefix?: string
+    badge?: React.ReactNode
+    badgeClass?: string
+    strong?: boolean
+  }
+  const sections: { title: string; items: NavItem[] }[] = [
+    {
+      title: 'Terminal',
+      items: [
+        { to: '/', label: 'Dashboard', icon: Activity },
+        { to: '/markets', label: 'Markets', icon: TrendingUp, prefix: '/markets/', badge: liveMarketCount ?? '…', badgeClass: 'bg-tertiary text-tertiary' },
+        { to: '/trade', label: 'Trade', icon: Zap, badge: 'x402', badgeClass: 'bg-utility-brand-50 text-utility-brand-700 font-bold', strong: true },
+        { to: '/divergence', label: 'Divergence', icon: GitCompare, badge: `${liveDivergenceCount ?? '…'} Live`, badgeClass: 'bg-utility-warning-50 text-utility-warning-700 font-bold' },
+        { to: '/wallets', label: 'Wallets', icon: Wallet, prefix: '/wallets/' },
+        { to: '/leaderboard', label: 'Leaderboard', icon: Trophy }
+      ]
+    },
+    {
+      title: 'Intelligence',
+      items: [
+        { to: '/journal', label: 'Pick Journal', icon: BookOpen },
+        { to: '/memory', label: 'Memory', icon: Brain, badge: 'Walrus', badgeClass: 'bg-utility-brand-50 text-utility-brand-700 font-bold' },
+        { to: '/alerts', label: 'Alerts', icon: Bell, badge: unreadAlerts > 0 ? unreadAlerts : undefined, badgeClass: 'bg-utility-error-50 text-utility-error-700 font-bold' }
+      ]
+    }
+  ]
+
+  const renderNav = (item: NavItem) => (
+    <NavLink
+      key={item.to}
+      to={item.to}
+      end={item.to === '/'}
+      title={collapsed ? item.label : undefined}
+      aria-label={collapsed ? item.label : undefined}
+      className={({ isActive }) => {
+        const active = isActive || (item.prefix ? location.pathname.startsWith(item.prefix) : false)
+        return `relative w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
+          active ? 'bg-brand-solid text-primary-on-brand shadow-xs' : 'text-secondary hover:bg-secondary-hover hover:text-primary'
+        }`
+      }}
+    >
+      <span className="flex items-center gap-sm min-w-0">
+        <item.icon className={`size-4 shrink-0 ${item.strong ? 'text-fg-brand-primary' : ''}`} />
+        {!collapsed && <span className={`truncate ${item.strong ? 'font-bold' : ''}`}>{item.label}</span>}
+      </span>
+      {item.badge != null &&
+        (collapsed ? (
+          item.to === '/alerts' && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-error-primary" />
+        ) : (
+          <span className={`text-xs px-xs rounded font-mono whitespace-nowrap ${item.badgeClass ?? ''}`}>{item.badge}</span>
+        ))}
+    </NavLink>
+  )
 
   // Live client UTC Clock
   useEffect(() => {
@@ -106,7 +184,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }, [cmdOpen, setCmdOpen])
 
   return (
-    <div className="min-h-screen bg-primary text-primary flex flex-col font-sans selection:bg-brand-solid selection:text-primary-on-brand pb-14 md:pb-0">
+    <div
+      className="min-h-screen bg-primary text-primary flex flex-col font-sans selection:bg-brand-solid selection:text-primary-on-brand pb-14 md:pb-0"
+      style={{ ['--pi-sidebar-w' as string]: collapsed ? '4rem' : '14rem' }}
+    >
       {/* Toast Notification (toast.md) */}
       {toast && (
         <div className="fixed bottom-16 right-4 md:bottom-6 md:right-6 z-50 flex items-start gap-sm rounded-lg border border-secondary bg-primary p-lg shadow-lg pi-rise text-xs font-mono">
@@ -116,14 +197,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Top Status Bar */}
-      <header className="h-12 border-b border-secondary bg-secondary px-md lg:px-lg flex items-center justify-between gap-md text-xs sticky top-0 z-30">
+      <header className="h-12 border-b border-secondary bg-secondary px-sm sm:px-md lg:px-lg flex items-center justify-between gap-sm sm:gap-md text-xs sticky top-0 z-30">
         <div className="flex items-center gap-md">
           <button
             onClick={() => navigate('/')}
             className="flex items-center gap-xs font-semibold text-sm tracking-wider uppercase text-left group"
           >
             <span className="pi-live w-2.5 h-2.5 rounded-full bg-brand-solid" />
-            <span className="text-brand-primary font-bold group-hover:text-primary transition-colors">
+            <span className="hidden sm:inline text-brand-primary font-bold group-hover:text-primary transition-colors">
               PredictIntel
             </span>
             <span className="text-quaternary hidden md:inline">|</span>
@@ -148,7 +229,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Global Search and Command Trigger */}
-        <div className="flex-1 max-w-md mx-sm md:mx-md">
+        <div className="flex-1 min-w-0 max-w-md sm:mx-sm md:mx-md">
           <button
             onClick={() => setCmdOpen(true)}
             className="w-full bg-primary border border-secondary hover:border-brand rounded-md pl-md pr-sm py-xs text-xs text-secondary flex items-center justify-between transition-colors text-left"
@@ -184,7 +265,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           <button
             onClick={() => navigate('/memory')}
-            className="flex items-center gap-xs text-tertiary bg-tertiary px-sm py-xxs rounded-full border border-secondary font-mono hover:border-brand transition-colors whitespace-nowrap"
+            className="hidden sm:flex items-center gap-xs text-tertiary bg-tertiary px-sm py-xxs rounded-full border border-secondary font-mono hover:border-brand transition-colors whitespace-nowrap"
           >
             <Brain className="size-3.5 text-fg-brand-primary" />
             <span className="hidden sm:inline">Walrus:</span>
@@ -194,6 +275,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="font-mono text-tertiary text-xs bg-tertiary px-sm py-xxs rounded-md border border-secondary hidden xl:block whitespace-nowrap">
             <span>{timeStr || '2026-10-27 18:42:05 UTC'}</span>
           </div>
+
+          <Suspense fallback={<span className="h-7 w-24 rounded-md pi-shimmer" aria-hidden="true" />}>
+            <HeaderWallet />
+          </Suspense>
         </div>
       </header>
       <TickerTape />
@@ -201,193 +286,47 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Main Container */}
       <div className="flex-1 flex overflow-hidden">
         {/* Desktop Sidebar Navigation */}
-        <aside className="w-56 border-r border-secondary bg-secondary hidden md:flex flex-col justify-between p-sm shrink-0">
+        <aside
+          className={`${collapsed ? 'w-16' : 'w-56'} transition-[width] duration-200 border-r border-secondary bg-secondary hidden md:flex flex-col justify-between p-sm shrink-0 overflow-hidden`}
+        >
           <div className="space-y-xxs">
-            <div className="px-sm py-xs text-quaternary uppercase text-xs font-semibold tracking-wider">
-              Terminal
+            <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-xxs pb-xs`}>
+              {!collapsed && <span className="px-xs text-quaternary uppercase text-xs font-semibold tracking-wider">Terminal</span>}
+              <button
+                onClick={toggleSidebar}
+                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                className="p-xs rounded-md text-quaternary hover:text-primary hover:bg-secondary-hover transition-colors"
+              >
+                {collapsed ? <PanelLeftOpen className="size-4 shrink-0" /> : <PanelLeftClose className="size-4 shrink-0" />}
+              </button>
             </div>
-            <NavLink
-              to="/"
-              className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <Activity className="size-4" />
-              <span>Dashboard</span>
-            </NavLink>
-
-            <NavLink
-              to="/markets"
-              className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive || location.pathname.startsWith('/markets/')
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <div className="flex items-center gap-sm">
-                <TrendingUp className="size-4" />
-                <span>Markets</span>
+            {sections.map((section, i) => (
+              <div key={section.title} className="space-y-xxs">
+                {i > 0 &&
+                  (collapsed ? (
+                    <div className="my-sm mx-sm border-t border-secondary" />
+                  ) : (
+                    <div className="pt-sm px-sm py-xs text-quaternary uppercase text-xs font-semibold tracking-wider">{section.title}</div>
+                  ))}
+                {section.items.map(renderNav)}
               </div>
-              <span className="text-xs bg-tertiary px-xs rounded text-tertiary font-mono">{liveMarketCount ?? '…'}</span>
-            </NavLink>
-
-            <NavLink
-              to="/trade"
-              className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <div className="flex items-center gap-sm">
-                <Zap className="size-4 text-fg-brand-primary" />
-                <span className="font-bold">Trade</span>
-              </div>
-              <span className="text-xs px-xs py-none rounded bg-utility-brand-50 text-utility-brand-700 font-mono font-bold">
-                x402
-              </span>
-            </NavLink>
-
-            <NavLink
-              to="/divergence"
-              className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <div className="flex items-center gap-sm">
-                <GitCompare className="size-4" />
-                <span>Divergence</span>
-              </div>
-              <span className="text-xs bg-utility-warning-50 text-utility-warning-700 px-xs rounded font-bold font-mono">
-                {liveDivergenceCount ?? '…'} Live
-              </span>
-            </NavLink>
-
-            <NavLink
-              to="/wallets"
-              className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive || location.pathname.startsWith('/wallets/')
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <Wallet className="size-4" />
-              <span>Wallets</span>
-            </NavLink>
-
-            <NavLink
-              to="/leaderboard"
-              className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <Trophy className="size-4" />
-              <span>Leaderboard</span>
-            </NavLink>
-
-            <div className="pt-sm px-sm py-xs text-quaternary uppercase text-xs font-semibold tracking-wider">
-              Intelligence
-            </div>
-
-            <NavLink
-              to="/journal"
-              className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <BookOpen className="size-4" />
-              <span>Pick Journal</span>
-            </NavLink>
-
-            <NavLink
-              to="/memory"
-              className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <div className="flex items-center gap-sm">
-                <Brain className="size-4" />
-                <span>Memory</span>
-              </div>
-              <span className="text-xs bg-utility-brand-50 text-utility-brand-700 px-xs rounded font-bold font-mono">
-                Walrus
-              </span>
-            </NavLink>
-
-            <NavLink
-              to="/alerts"
-              className={({ isActive }) =>
-                `w-full flex items-center justify-between px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <div className="flex items-center gap-sm">
-                <Bell className="size-4" />
-                <span>Alerts</span>
-              </div>
-              {unreadAlerts > 0 && (
-                <span className="text-xs bg-utility-error-50 text-utility-error-700 px-xs rounded font-bold font-mono">
-                  {unreadAlerts}
-                </span>
-              )}
-            </NavLink>
+            ))}
           </div>
 
           <div className="space-y-xs pt-md border-t border-secondary">
-            <NavLink
-              to="/settings"
-              className={({ isActive }) =>
-                `w-full flex items-center gap-sm px-sm py-xs rounded-lg text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? 'bg-brand-solid text-primary-on-brand shadow-xs'
-                    : 'text-secondary hover:bg-secondary-hover hover:text-primary hover:translate-x-0.5'
-                }`
-              }
-            >
-              <Settings className="size-4" />
-              <span>Settings</span>
-            </NavLink>
-            <div className="p-xs bg-tertiary rounded-md border border-secondary text-xs text-tertiary">
-              <div className="flex items-center justify-between text-quaternary mb-xxs">
-                <span>Walrus Mainnet</span>
-                <span className="text-utility-success-700 font-mono font-medium">{memoryCount}/10 Blobs</span>
+            {renderNav({ to: '/settings', label: 'Settings', icon: Settings })}
+            {!collapsed && (
+              <div className="p-xs bg-tertiary rounded-md border border-secondary text-xs text-tertiary">
+                <div className="flex items-center justify-between text-quaternary mb-xxs">
+                  <span>Walrus Mainnet</span>
+                  <span className="text-utility-success-700 font-mono font-medium">{memoryCount}/10 Blobs</span>
+                </div>
+                <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-brand-solid h-full transition-all" style={{ width: `${Math.min(100, (memoryCount / 10) * 100)}%` }} />
+                </div>
               </div>
-              <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-brand-solid h-full transition-all"
-                  style={{ width: `${Math.min(100, (memoryCount / 10) * 100)}%` }}
-                />
-              </div>
-            </div>
+            )}
           </div>
         </aside>
 

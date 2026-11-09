@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, Activity } from 'lucide-react'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
@@ -8,16 +8,10 @@ import OrderTicket from '../components/trade/OrderTicket'
 import TradeTables from '../components/trade/TradeTables'
 import LiveOddsPanel, { LiveMarketDetail } from '../components/trade/LiveOddsPanel'
 import {
-  AgentWallet,
-  OpenOrder,
-  Position,
   TicketState,
-  TradeRecord,
   apiJson,
-  cents,
-  usd
+  cents
 } from '../components/trade/types'
-import { useApp } from '../context/AppContext'
 import { VENUE_MAP } from '../lib/config/venues'
 import SuiWalletScope from '../components/SuiWalletScope'
 import { FlashValue } from '../components/motion'
@@ -73,7 +67,6 @@ interface LivePrices {
 const CATEGORIES = ['all', 'crypto', 'sports', 'politics', 'macro', 'culture']
 
 function TradeWorkspace() {
-  const { showToast } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const marketParam = searchParams.get('market')
   const outcomeParam = searchParams.get('outcome')
@@ -91,10 +84,6 @@ function TradeWorkspace() {
   const [bookVenue, setBookVenue] = useState<string | null>(null)
   const [orderBook, setOrderBook] = useState<any>(null)
 
-  const [agentWallet, setAgentWallet] = useState<AgentWallet | null>(null)
-  const [positions, setPositions] = useState<Position[]>([])
-  const [orders, setOrders] = useState<OpenOrder[]>([])
-  const [history, setHistory] = useState<TradeRecord[]>([])
 
   const [ticket, setTicket] = useState<TicketState>({
     side: 'buy',
@@ -181,14 +170,6 @@ function TradeWorkspace() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const reloadUserData = useCallback(() => {
-    apiJson<AgentWallet>('/api/agent').then(setAgentWallet).catch(() => {})
-    apiJson<OpenOrder[]>('/api/trade/orders').then(setOrders).catch(() => {})
-    apiJson<Position[]>('/api/trade/positions').then(setPositions).catch(() => {})
-    apiJson<TradeRecord[]>('/api/trade/history').then(setHistory).catch(() => {})
-  }, [])
-
-  useEffect(reloadUserData, [reloadUserData])
 
   const listingVenues = market?.venues ?? []
 
@@ -257,20 +238,9 @@ function TradeWorkspace() {
     )
   }
 
-  // Sells every share of a vault position into the book right away.
-  const closePosition = async (p: Position) => {
-    try {
-      const r = await apiJson<{ shares: number; proceeds: number; avgPrice: number }>(`/api/trade/positions/${p.id}/close`, { method: 'POST' })
-      showToast(`Closed ${r.shares} ${p.outcomeLabel} shares @ ${cents(r.avgPrice)} · ${usd(r.proceeds)} back to the vault`)
-      reloadUserData()
-    } catch (err: any) {
-      showToast(`Couldn't close: ${err.message}`)
-    }
-  }
-
   return (
     <div className="space-y-md pb-24 lg:pb-0">
-      <AgentVault wallet={agentWallet} onChange={reloadUserData} />
+      <AgentVault />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-md">
         <div className="lg:col-span-3 space-y-md">
@@ -481,8 +451,6 @@ function TradeWorkspace() {
               outcomeLabel={outcome.label}
               ticket={ticket}
               setTicket={setTicket}
-              agentWallet={agentWallet}
-              onExecuted={reloadUserData}
               live={Boolean(market.live)}
               priceVersion={liveError ?? liveDetail?.fetchedAt}
             />
@@ -492,7 +460,7 @@ function TradeWorkspace() {
         </div>
       </div>
 
-      <TradeTables positions={positions} orders={orders} history={history} onClosePosition={closePosition} onChange={reloadUserData} />
+      <TradeTables />
 
       {market && outcome && (
         <div className="lg:hidden fixed left-0 right-0 bottom-14 md:bottom-0 z-30 border-t border-secondary bg-primary px-md py-sm flex items-center justify-between gap-sm">

@@ -4,6 +4,7 @@ import { Zap, PenLine, AlertCircle } from 'lucide-react'
 import { Panel } from '../SharedUI'
 import { useApp } from '../../context/AppContext'
 import { useJournal } from '../../lib/paperJournal'
+import { executeVaultOrder, useVault } from '../../lib/agentVault'
 import {
   AgentWallet,
   ExecutionStatus,
@@ -22,8 +23,7 @@ interface Props {
   outcomeLabel: string
   ticket: TicketState
   setTicket: React.Dispatch<React.SetStateAction<TicketState>>
-  agentWallet: AgentWallet | null
-  onExecuted: () => void
+  onExecuted?: () => void
   live?: boolean
   priceVersion?: string
 }
@@ -43,26 +43,26 @@ function PreviewRow({ label, value, tone }: { label: string; value: React.ReactN
   )
 }
 
-export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, setTicket, agentWallet, onExecuted, live, priceVersion }: Props) {
+export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, setTicket, onExecuted, live, priceVersion }: Props) {
   const { showToast } = useApp()
   const { journal, paperBuy, closeTrade } = useJournal()
   // Paper positions this ticket can close: same market and outcome, still open.
   const paperOpen = journal.trades.filter(t => t.status === 'open' && t.market === market.id && t.outcomeId === outcomeId)
   const isPaper = ticket.mode === 'direct'
+  const vault = useVault()
+  // Vault shares on this outcome, for agent sells; the backend can't see browser-held positions.
+  const vaultHeld = vault.positions.filter(p => p.market === market.id && p.outcomeId === outcomeId)
+  const vaultVenue = vaultHeld[0]?.venueId
+  const vaultShares = vaultHeld.filter(p => p.venueId === vaultVenue).reduce((s, p) => s + p.shares, 0)
 
   const [quote, setQuote] = useState<TradeQuote | null>(null)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [execution, setExecution] = useState<ExecutionStatus | null>(null)
-  const pollRef = useRef<number | null>(null)
 
   const update = (patch: Partial<TicketState>) => setTicket(t => ({ ...t, ...patch }))
   const busy = execution?.status === 'building' || execution?.status === 'signing' || execution?.status === 'pending'
-
-  useEffect(() => () => {
-    if (pollRef.current) window.clearInterval(pollRef.current)
-  }, [])
 
   useEffect(() => {
     const amount = Number(ticket.amount)
@@ -81,6 +81,13 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
       mode: ticket.mode
     })
     if (ticket.type === 'limit') params.set('limitPrice', ticket.limitPrice)
+    if (ticket.mode === 'agent') {
+      params.set('allowed', vault.rules.allowedVenues.join(','))
+      if (ticket.side === 'sell') {
+        params.set('held', String(vaultShares))
+        if (vaultVenue) params.set('venue', vaultVenue)
+      }
+    }
 
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
@@ -102,14 +109,14 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [market.id, outcomeId, ticket.side, ticket.type, ticket.amount, ticket.limitPrice, ticket.split, ticket.mode, priceVersion])
+  }, [market.id, outcomeId, ticket.side, ticket.type, ticket.amount, ticket.limitPrice, ticket.split, ticket.mode, priceVersion, vault.rules.allowedVenues.join(','), vaultShares, vaultVenue])
 
   const legsLabel = quote?.legs?.map(l => l.venueName).join(' + ') || quote?.bestExecutableRoute?.venueName || ''
 
-  const agentLimits = agentWallet && {
-    dailyLeft: Math.max(0, agentWallet.rules.dailyBudget - agentWallet.spentToday),
-    maxPerTrade: agentWallet.rules.maxPerTrade,
-    balance: agentWallet.balanceUSDC
+  const agentLimits = {
+    dailyLeft: Math.max(0, vault.rules.dailyBudget - vault.spentToday),
+    maxPerTrade: vault.rules.maxPerTrade,
+    balance: vault.balanceUSDC
   }
   const agentWarning = (() => {
     if (ticket.mode !== 'agent' || !agentLimits || !quote) return null
@@ -117,7 +124,7 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     if (amount > agentLimits.maxPerTrade) return `Above the agent's max per trade (${usd(agentLimits.maxPerTrade)}).`
     if (ticket.side === 'buy' && amount > agentLimits.balance) return `Vault only holds ${usd(agentLimits.balance)} — deposit first.`
     if (ticket.side === 'buy' && amount > agentLimits.dailyLeft) return `Only ${usd(agentLimits.dailyLeft)} of today's budget left.`
-    if (quote.slippagePct > (agentWallet?.rules.maxSlippagePct ?? Infinity)) return `Slippage ${quote.slippagePct}% is above the agent limit.`
+    if (quote.slippagePct > vault.rules.maxSlippagePct) return `Slippage ${quote.slippagePct}% is above the agent limit.`
     return null
   })()
 
@@ -126,23 +133,6 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     if (ticket.mode === 'agent' && agentLimits) return Math.floor(Math.min(agentLimits.balance, agentLimits.maxPerTrade, agentLimits.dailyLeft))
     return null
   })()
-
-  const startPolling = (id: string) => {
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const check = await apiJson<any>(`/api/execute/${id}`)
-        if (check.status !== 'confirmed') return
-        window.clearInterval(pollRef.current!)
-        pollRef.current = null
-        setExecution(prev => prev && { ...prev, status: 'confirmed', ref: check.ref, txDigest: check.txDigest, simulated: check.simulated })
-        showToast('Agent order filled (simulated)')
-        onExecuted()
-      } catch {
-        window.clearInterval(pollRef.current!)
-        pollRef.current = null
-      }
-    }, 1000)
-  }
 
   const execute = async () => {
     if (!quote && !paperClosing) return
@@ -161,9 +151,14 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
     try {
       if (ticket.mode === 'agent') {
         setExecution({ ...base, status: 'pending' })
-        const exec = await postJson<{ id: string }>('/api/execute', order)
-        showToast('Agent order submitted')
-        startPolling(exec.id)
+        const q = await executeVaultOrder(order)
+        setExecution({ ...base, shares: q.totalShares, status: 'confirmed', simulated: true })
+        showToast(
+          q.totalShares > 0
+            ? `Agent ${q.side} ${q.outcomeLabel}: ${q.totalShares} sh @ ${(q.avgFillPrice * 100).toFixed(1)}¢ (simulated)`
+            : `Agent limit order resting at ${(q.limitPrice * 100).toFixed(1)}¢`
+        )
+        onExecuted?.()
         return
       }
 
@@ -423,6 +418,8 @@ export default function OrderTicket({ market, outcomeId, outcomeLabel, ticket, s
               <p className="text-[11px] text-quaternary font-sans">
                 {execution.mode === 'direct'
                   ? 'Added to your paper journal at the live price.'
+                  : execution.mode === 'agent'
+                  ? 'Filled in your agent vault (simulated, saved in this browser).'
                   : execution.simulated
                   ? `Simulated fill (ref ${execution.ref}). On-chain settlement on ${execution.venues} isn't wired yet.`
                   : `Tx ${execution.txDigest}`}
