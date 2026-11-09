@@ -32,8 +32,6 @@ const HeaderWallet = lazy(() => import('./HeaderWallet'))
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme, toast, cmdOpen, setCmdOpen } = useApp()
   const [timeStr, setTimeStr] = useState('')
-  const [unreadAlerts, setUnreadAlerts] = useState(0)
-  const [memoryCount, setMemoryCount] = useState(5)
   const [liveMarketCount, setLiveMarketCount] = useState<number | null>(null)
   const [liveDivergenceCount, setLiveDivergenceCount] = useState<number | null>(null)
   const navigate = useNavigate()
@@ -65,24 +63,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     badgeClass?: string
     strong?: boolean
   }
+  // Only pages backed by live data; demo pages (leaderboard, memory, alerts, settings) stay out of the menu.
   const sections: { title: string; items: NavItem[] }[] = [
     {
       title: 'Terminal',
       items: [
         { to: '/', label: 'Dashboard', icon: Activity },
         { to: '/markets', label: 'Markets', icon: TrendingUp, prefix: '/markets/', badge: liveMarketCount ?? '…', badgeClass: 'bg-tertiary text-tertiary' },
-        { to: '/trade', label: 'Trade', icon: Zap, badge: 'x402', badgeClass: 'bg-utility-brand-50 text-utility-brand-700 font-bold', strong: true },
-        { to: '/divergence', label: 'Divergence', icon: GitCompare, badge: `${liveDivergenceCount ?? '…'} Live`, badgeClass: 'bg-utility-warning-50 text-utility-warning-700 font-bold' },
+        { to: '/trade', label: 'Trade', icon: Zap, strong: true },
+        { to: '/divergence', label: 'Divergence', icon: GitCompare, badge: liveDivergenceCount ?? '…', badgeClass: 'bg-utility-warning-50 text-utility-warning-700 font-bold' },
         { to: '/wallets', label: 'Wallets', icon: Wallet, prefix: '/wallets/' },
-        { to: '/leaderboard', label: 'Leaderboard', icon: Trophy }
-      ]
-    },
-    {
-      title: 'Intelligence',
-      items: [
-        { to: '/journal', label: 'Pick Journal', icon: BookOpen },
-        { to: '/memory', label: 'Memory', icon: Brain, badge: 'Walrus', badgeClass: 'bg-utility-brand-50 text-utility-brand-700 font-bold' },
-        { to: '/alerts', label: 'Alerts', icon: Bell, badge: unreadAlerts > 0 ? unreadAlerts : undefined, badgeClass: 'bg-utility-error-50 text-utility-error-700 font-bold' }
+        { to: '/journal', label: 'Journal', icon: BookOpen }
       ]
     }
   ]
@@ -105,12 +96,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <item.icon className={`size-4 shrink-0 ${item.strong ? 'text-fg-brand-primary' : ''}`} />
         {!collapsed && <span className={`truncate ${item.strong ? 'font-bold' : ''}`}>{item.label}</span>}
       </span>
-      {item.badge != null &&
-        (collapsed ? (
-          item.to === '/alerts' && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-error-primary" />
-        ) : (
-          <span className={`text-xs px-xs rounded font-mono whitespace-nowrap ${item.badgeClass ?? ''}`}>{item.badge}</span>
-        ))}
+      {item.badge != null && !collapsed && (
+        <span className={`text-xs px-xs rounded font-mono whitespace-nowrap ${item.badgeClass ?? ''}`}>{item.badge}</span>
+      )}
     </NavLink>
   )
 
@@ -123,25 +111,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     updateTime()
     const timer = setInterval(updateTime, 1000)
     return () => clearInterval(timer)
-  }, [])
-
-  // Poll alerts and memory counts
-  useEffect(() => {
-    const fetchCounters = async () => {
-      try {
-        const [aRes, mRes] = await Promise.all([
-          fetch('/api/alerts').then(r => r.json()),
-          fetch('/api/memory').then(r => r.json())
-        ])
-        setUnreadAlerts(Array.isArray(aRes) ? aRes.filter((a: any) => !a.read).length : 0)
-        setMemoryCount(Array.isArray(mRes) ? mRes.length : 5)
-      } catch {
-        // ignore
-      }
-    }
-    fetchCounters()
-    const interval = setInterval(fetchCounters, 8000)
-    return () => clearInterval(interval)
   }, [])
 
   // Live market count for the sidebar badge (the server caches this list).
@@ -263,15 +232,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             {theme === 'dark' ? <Sun className="size-4 text-warning-primary" /> : <Moon className="size-4" />}
           </button>
 
-          <button
-            onClick={() => navigate('/memory')}
-            className="hidden sm:flex items-center gap-xs text-tertiary bg-tertiary px-sm py-xxs rounded-full border border-secondary font-mono hover:border-brand transition-colors whitespace-nowrap"
-          >
-            <Brain className="size-3.5 text-fg-brand-primary" />
-            <span className="hidden sm:inline">Walrus:</span>
-            <strong className="text-brand-primary">{memoryCount} Blobs</strong>
-          </button>
-
           <div className="font-mono text-tertiary text-xs bg-tertiary px-sm py-xxs rounded-md border border-secondary hidden xl:block whitespace-nowrap">
             <span>{timeStr || '2026-10-27 18:42:05 UTC'}</span>
           </div>
@@ -314,20 +274,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             ))}
           </div>
 
-          <div className="space-y-xs pt-md border-t border-secondary">
-            {renderNav({ to: '/settings', label: 'Settings', icon: Settings })}
-            {!collapsed && (
-              <div className="p-xs bg-tertiary rounded-md border border-secondary text-xs text-tertiary">
-                <div className="flex items-center justify-between text-quaternary mb-xxs">
-                  <span>Walrus Mainnet</span>
-                  <span className="text-utility-success-700 font-mono font-medium">{memoryCount}/10 Blobs</span>
-                </div>
-                <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-brand-solid h-full transition-all" style={{ width: `${Math.min(100, (memoryCount / 10) * 100)}%` }} />
-                </div>
-              </div>
-            )}
-          </div>
+          <p className={`px-xs text-[10px] text-quaternary leading-snug ${collapsed ? 'hidden' : ''}`}>
+            Paper trading on live WaterX and DeepBook Predict prices.
+          </p>
         </aside>
 
         {/* Content View */}
@@ -383,13 +332,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </NavLink>
 
         <NavLink
-          to="/memory"
+          to="/journal"
           className={({ isActive }) =>
             `flex flex-col items-center gap-0.5 p-1 ${isActive ? 'text-brand-primary' : 'text-quaternary'}`
           }
         >
-          <Brain className="size-4" />
-          <span className="text-[10px]">Memory</span>
+          <BookOpen className="size-4" />
+          <span className="text-[10px]">Journal</span>
         </NavLink>
 
         <button onClick={toggleTerminal} className="flex flex-col items-center gap-0.5 p-1 text-quaternary">

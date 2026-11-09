@@ -73,7 +73,6 @@ function TradeWorkspace() {
   const isLive = isLiveId(marketParam)
 
   const [markets, setMarkets] = useState<MarketSummary[]>([])
-  const [listSource, setListSource] = useState<'live' | 'demo'>(marketParam && !isLive ? 'demo' : 'live')
   const [liveList, setLiveList] = useState<LiveList | null>(null)
   const [liveDetail, setLiveDetail] = useState<LiveMarketDetail | null>(null)
   const [liveError, setLiveError] = useState<string | null>(null)
@@ -125,13 +124,11 @@ function TradeWorkspace() {
 
   useEffect(() => {
     if (marketParam) return
-    if (listSource === 'demo' && markets.length) selectMarket(markets[0].slug)
-    if (listSource === 'live' && liveList) {
+    if (liveList) {
       const first = liveList.waterx[0] ?? liveList.deepbook[liveList.deepbook.length - 1]
       if (first) selectMarket(first.id)
-      else if (markets.length) setListSource('demo')
     }
-  }, [marketParam, listSource, liveList, markets])
+  }, [marketParam, liveList])
 
   useEffect(() => {
     if (!isLive || !marketParam) {
@@ -202,7 +199,6 @@ function TradeWorkspace() {
 
   const matchesFilter = (m: { title: string; category: string }) =>
     (category === 'all' || m.category === category) && m.title.toLowerCase().includes(search.trim().toLowerCase())
-  const filteredMarkets = markets.filter(matchesFilter)
   const liveGroups = [
     { key: 'deepbook', label: 'DeepBook Predict · BTC up/down', items: (liveList?.deepbook ?? []).filter(matchesFilter).map(m => liveSummary(m, 'deepbook')), error: liveList?.errors.deepbook },
     { key: 'waterx', label: 'WaterX · Events', items: (liveList?.waterx ?? []).filter(matchesFilter).map(m => liveSummary(m, 'waterx')), error: liveList?.errors.waterx },
@@ -244,23 +240,8 @@ function TradeWorkspace() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-md">
         <div className="lg:col-span-3 space-y-md">
-          <Panel title="Sui markets" badge="WaterX · DeepBook" noPadding>
+          <Panel title="Markets" badge={liveList ? `${(liveList.deepbook.length ?? 0) + allWaterx(liveList).length} live` : 'live'} noPadding>
             <div className="p-sm space-y-xs border-b border-secondary">
-              <div className="grid grid-cols-2 gap-xxs bg-secondary p-xxs rounded-lg border border-secondary" role="tablist" aria-label="Market source">
-                {(['live', 'demo'] as const).map(src => (
-                  <button
-                    key={src}
-                    role="tab"
-                    aria-selected={listSource === src}
-                    onClick={() => setListSource(src)}
-                    className={`py-xxs rounded text-[11px] font-bold ${
-                      listSource === src ? 'bg-brand-solid text-primary-on-brand' : 'text-quaternary hover:text-primary'
-                    }`}
-                  >
-                    {src === 'live' ? `Live (${(liveList?.deepbook.length ?? 0) + allWaterx(liveList).length})` : `Demo (${markets.length})`}
-                  </button>
-                ))}
-              </div>
               <label className="flex items-center gap-xs rounded-md border border-primary bg-primary px-sm py-xxs">
                 <Search className="size-3.5 text-quaternary" />
                 <input
@@ -286,12 +267,7 @@ function TradeWorkspace() {
               </div>
             </div>
             <div className="divide-y divide-secondary max-h-64 lg:max-h-[460px] overflow-y-auto">
-              {listSource === 'demo' ? (
-                <>
-                  {filteredMarkets.length === 0 && <p className="p-md text-xs text-tertiary">No markets match that search.</p>}
-                  {filteredMarkets.map(renderMarketRow)}
-                </>
-              ) : !liveList ? (
+              {!liveList ? (
                 <div className="p-sm space-y-xs">
                   {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded pi-shimmer" />)}
                 </div>

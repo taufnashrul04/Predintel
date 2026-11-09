@@ -66,23 +66,12 @@ function VenueLink({ side, tone }: { side: VenueSide; tone: 'buy' | 'sell' }) {
 }
 
 export default function DivergencePage() {
-  const [source, setSource] = useState<'live' | 'demo'>('live')
-  const [divergences, setDivergences] = useState<any[]>([])
   const [threshold, setThreshold] = useState<number>(1)
   const [live, setLive] = useState<LiveDivergence | null>(null)
   const [liveError, setLiveError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (source !== 'demo') return
-    fetch(`/api/divergence?threshold=${threshold}`)
-      .then(r => r.json())
-      .then(d => setDivergences(Array.isArray(d) ? d : []))
-      .catch(console.error)
-  }, [threshold, source])
-
-  useEffect(() => {
-    if (source !== 'live') return
     let cancelled = false
     const load = () =>
       fetch('/api/divergence/live?min=0.5')
@@ -101,7 +90,7 @@ export default function DivergencePage() {
       cancelled = true
       window.clearInterval(t)
     }
-  }, [source])
+  }, [])
 
   const liveRows = (live?.rows ?? []).filter(r => r.gapPp >= threshold)
 
@@ -111,35 +100,17 @@ export default function DivergencePage() {
         <div>
           <h2 className="text-heading-xs font-bold text-primary">Cross-Venue Divergence &amp; Arbitrage Scanner</h2>
           <p className="text-xs text-secondary mt-xxs">
-            {source === 'live'
-              ? 'The same market priced on WaterX and Polymarket. Each venue links straight to that market.'
-              : 'Demo model across seven venues.'}
+            The same market priced on WaterX and Polymarket. Each venue links straight to that market.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-sm">
-          <div className="flex gap-xxs bg-secondary p-xxs rounded-lg border border-secondary" role="tablist" aria-label="Divergence source">
-            {(['live', 'demo'] as const).map(src => (
-              <button
-                key={src}
-                role="tab"
-                aria-selected={source === src}
-                onClick={() => {
-                  setSource(src)
-                  setThreshold(src === 'live' ? 1 : 5)
-                }}
-                className={`px-sm py-xxs rounded text-xs font-bold ${source === src ? 'bg-brand-solid text-primary-on-brand' : 'text-quaternary hover:text-primary'}`}
-              >
-                {src === 'live' ? 'Live · WaterX × Polymarket' : 'Demo'}
-              </button>
-            ))}
-          </div>
           <div className="flex items-center gap-sm bg-secondary p-sm rounded-lg border border-secondary text-xs font-mono">
             <span className="text-quaternary">Gap ≥</span>
             <span className="text-utility-warning-700 font-bold text-sm">{threshold.toFixed(1)}pp</span>
             <input
               type="range"
-              min={source === 'live' ? 0.5 : 1}
+              min="0.5"
               max="20"
               step="0.5"
               value={threshold}
@@ -151,8 +122,7 @@ export default function DivergencePage() {
         </div>
       </div>
 
-      {source === 'live' ? (
-        <Panel
+      <Panel
           title="Live divergence"
           badge={live ? `${liveRows.length} OF ${live.matched} MATCHED` : 'LOADING'}
           badgeVariant="success"
@@ -220,52 +190,6 @@ export default function DivergencePage() {
             </div>
           )}
         </Panel>
-      ) : (
-        <Panel title="Divergence matches" badge={`${divergences.length} · DEMO`} noPadding>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-mono">
-              <thead>
-                <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-                  <th className="py-xs px-sm">Market Event</th>
-                  <th className="py-xs px-sm">Outcome</th>
-                  <th className="py-xs px-sm">Consensus</th>
-                  <th className="py-xs px-sm">Lowest Venue (Buy)</th>
-                  <th className="py-xs px-sm">Highest Venue (Sell)</th>
-                  <th className="py-xs px-sm">Spread Gap</th>
-                  <th className="py-xs px-sm">Gross Edge</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-secondary">
-                {divergences.map((d: any, idx: number) => (
-                  <tr
-                    key={idx}
-                    onClick={() => navigate(`/markets/${d.event.slug || d.event.id}`)}
-                    className="hover:bg-secondary-hover cursor-pointer transition-colors"
-                  >
-                    <td className="py-sm px-sm font-sans font-medium text-primary">
-                      <div className="truncate max-w-sm">{d.event.title}</div>
-                      <span className="text-[10px] text-tertiary uppercase">{d.event.category}</span>
-                    </td>
-                    <td className="py-sm px-sm font-bold text-brand-primary">{d.outcome?.label || 'YES'}</td>
-                    <td className="py-sm px-sm">{(d.consensus * 100).toFixed(1)}¢</td>
-                    <td className="py-sm px-sm text-utility-success-700 font-bold">
-                      {VENUE_MAP.get(d.minQuote.venueId)?.name} @ {(d.minQuote.lastPrice * 100).toFixed(1)}¢
-                    </td>
-                    <td className="py-sm px-sm text-utility-error-700 font-bold">
-                      {VENUE_MAP.get(d.maxQuote.venueId)?.name} @ {(d.maxQuote.lastPrice * 100).toFixed(1)}¢
-                    </td>
-                    <td className="py-sm px-sm font-bold text-utility-warning-700">+{d.spreadPp.toFixed(1)}pp</td>
-                    <td className="py-sm px-sm font-bold text-utility-success-700">+{d.arbitrageEdge.toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="px-sm py-xs border-t border-secondary text-[10px] text-quaternary">
-              Demo data: these quotes are simulated, so there are no venue links here. Switch to Live for real markets.
-            </p>
-          </div>
-        </Panel>
-      )}
     </div>
   )
 }

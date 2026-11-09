@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Trash2, Plus, Radar } from 'lucide-react'
 import { useCurrentAccount } from '@mysten/dapp-kit-react'
@@ -12,76 +12,10 @@ import { PredictFlow, shortId, usdFmt, usePredictFlow } from '../lib/predictFlow
 import { useJournal } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
-type View = 'all' | 'following' | 'mine' | 'onchain'
+type View = 'mine' | 'onchain'
 
 const th = 'py-xs px-sm'
 const td = 'py-sm px-sm'
-
-function TrackedTable({
-  wallets,
-  onToggleFollow,
-  empty
-}: {
-  wallets: any[]
-  onToggleFollow: (address: string, e: React.MouseEvent) => void
-  empty: string
-}) {
-  const navigate = useNavigate()
-  if (wallets.length === 0) return <p className="p-xl text-center text-xs text-tertiary">{empty}</p>
-  return (
-    <table className="w-full text-left text-xs font-mono">
-      <thead>
-        <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
-          <th className={th}>Forecaster</th>
-          <th className={th}>Network</th>
-          <th className={th}>Total Volume</th>
-          <th className={th}>Realized PnL</th>
-          <th className={th}>Win Rate</th>
-          <th className={th}>Brier Score</th>
-          <th className={th}>Credibility</th>
-          <th className={`${th} text-right`}>Follow</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-secondary">
-        {wallets.map(w => (
-          <tr
-            key={w.address}
-            onClick={() => navigate(`/wallets/${w.address}`)}
-            className="hover:bg-secondary-hover cursor-pointer transition-colors"
-          >
-            <td className={`${td} font-sans text-primary`}>
-              <div className="font-semibold flex items-center gap-xs">
-                <span>{w.label || 'Anonymous Quant'}</span>
-                {w.isWhale && (
-                  <span className="text-[10px] px-xs rounded bg-utility-brand-50 text-utility-brand-700 font-mono">WHALE</span>
-                )}
-              </div>
-              <TruncatedAddress address={w.address} />
-            </td>
-            <td className={`${td} text-quaternary`}>{w.chain}</td>
-            <td className={td}>{formatMoney(w.totalVolume)}</td>
-            <td className={`${td} font-bold ${w.realizedPnl >= 0 ? 'text-utility-success-700' : 'text-utility-error-700'}`}>
-              {w.realizedPnl >= 0 ? `+$${(w.realizedPnl / 1000).toFixed(1)}k` : `-$${(Math.abs(w.realizedPnl) / 1000).toFixed(1)}k`}
-            </td>
-            <td className={td}>{(w.winRate * 100).toFixed(0)}%</td>
-            <td className={`${td} text-tertiary`}>{w.brierScore.toFixed(3)}</td>
-            <td className={`${td} text-brand-primary font-bold text-sm`}>{w.credibilityScore}</td>
-            <td className={`${td} text-right`}>
-              <button
-                onClick={e => onToggleFollow(w.address, e)}
-                className={`px-sm py-xxs rounded text-xs transition-colors font-sans ${
-                  w.isFollowed ? 'bg-brand-solid text-primary-on-brand font-semibold' : 'bg-secondary text-quaternary hover:text-primary'
-                }`}
-              >
-                {w.isFollowed ? 'Following' : 'Follow'}
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
 
 function MyWalletRow({ wallet, onRemove }: { wallet: MyWallet; onRemove: (w: MyWallet) => void }) {
   const navigate = useNavigate()
@@ -337,47 +271,17 @@ function MyWalletsSection() {
 }
 
 function WalletsWorkspace() {
-  const [wallets, setWallets] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
-  const view = (['following', 'mine', 'onchain'].includes(searchParams.get('view') ?? '') ? searchParams.get('view') : 'all') as View
+  const view: View = searchParams.get('view') === 'mine' ? 'mine' : 'onchain'
   const navigate = useNavigate()
-  const { showToast } = useApp()
   const { wallets: mine } = useMyWallets()
   const { flow, error: flowError } = usePredictFlow()
-
-  useEffect(() => {
-    fetch('/api/wallets')
-      .then(r => r.json())
-      .then(d => setWallets(Array.isArray(d) ? d : []))
-      .catch(console.error)
-  }, [])
-
-  const handleToggleFollow = async (address: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      const res = await fetch(`/api/wallets/${address}/follow`, { method: 'POST' }).then(r => r.json())
-      setWallets(prev =>
-        prev.map(w => (w.address.toLowerCase() === address.toLowerCase() ? { ...w, isFollowed: res.followed } : w))
-      )
-      showToast(res.followed ? `Now following ${address.slice(0, 6)}...` : `Unfollowed wallet`)
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
-  const q = search.trim().toLowerCase()
-  const matches = (w: any) => w.address.toLowerCase().includes(q) || (w.label && w.label.toLowerCase().includes(q))
-  const followed = wallets.filter(w => w.isFollowed)
-  const shown = (view === 'following' ? followed : wallets).filter(matches)
   const lookupAddress = parseSuiAddress(search)
-  const lookupIsKnown = lookupAddress && wallets.some(w => w.address.toLowerCase() === lookupAddress)
 
   const tabs: { id: View; label: string; count: number }[] = [
-    { id: 'all', label: 'Forecasters (demo)', count: wallets.length },
-    { id: 'following', label: 'Following', count: followed.length },
-    { id: 'mine', label: 'My wallets', count: mine.length },
-    { id: 'onchain', label: 'On-chain traders', count: flow?.traders.length ?? 0 }
+    { id: 'onchain', label: 'On-chain traders', count: flow?.traders.length ?? 0 },
+    { id: 'mine', label: 'My wallets', count: mine.length }
   ]
 
   return (
@@ -385,13 +289,13 @@ function WalletsWorkspace() {
       <div className="bg-primary border border-secondary rounded-xl p-md md:p-xl shadow-xs space-y-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-sm">
           <div className="relative max-w-sm w-full">
-            <Search className="size-3.5 text-fg-quaternary absolute left-sm top-2.5" />
+            <Search className="size-3.5 text-fg-quaternary absolute left-sm top-2.5 shrink-0" />
             <input
               type="text"
-              placeholder="Search by label, or paste any Sui address…"
+              placeholder="Paste any Sui address to check it live…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              aria-label="Search wallets"
+              aria-label="Sui address lookup"
               className="w-full bg-secondary border border-secondary rounded-md pl-xl pr-sm py-xs text-xs text-primary placeholder:text-placeholder focus:outline-none"
             />
           </div>
@@ -401,7 +305,7 @@ function WalletsWorkspace() {
                 key={t.id}
                 role="tab"
                 aria-selected={view === t.id}
-                onClick={() => setSearchParams(t.id === 'all' ? {} : { view: t.id }, { replace: true })}
+                onClick={() => setSearchParams(t.id === 'onchain' ? {} : { view: t.id }, { replace: true })}
                 className={`px-md py-xs rounded text-xs font-bold whitespace-nowrap transition-colors ${
                   view === t.id ? 'bg-brand-solid text-primary-on-brand shadow-xs' : 'text-quaternary hover:text-primary'
                 }`}
@@ -411,41 +315,17 @@ function WalletsWorkspace() {
             ))}
           </div>
         </div>
-        {lookupAddress && !lookupIsKnown && (
+        {lookupAddress && (
           <button
             onClick={() => navigate(`/wallets/${lookupAddress}`)}
             className="inline-flex items-center gap-xs rounded-lg border border-brand bg-utility-brand-50 px-md py-xs text-xs font-semibold text-utility-brand-700"
           >
-            <Radar className="size-3.5" /> Check {lookupAddress.slice(0, 8)}…{lookupAddress.slice(-4)} live on Sui
+            <Radar className="size-3.5 shrink-0" /> Check {lookupAddress.slice(0, 8)}…{lookupAddress.slice(-4)} live on Sui
           </button>
         )}
       </div>
 
-      {view === 'mine' ? (
-        <MyWalletsSection />
-      ) : view === 'onchain' ? (
-        <OnchainTradersSection flow={flow} error={flowError} />
-      ) : (
-        <Panel
-          title={view === 'following' ? 'Wallets you follow' : 'Tracked forecasters & smart wallets'}
-          badge={`${shown.length}`}
-          noPadding
-        >
-          <div className="overflow-x-auto">
-            <TrackedTable
-              wallets={shown}
-              onToggleFollow={handleToggleFollow}
-              empty={
-                view === 'following'
-                  ? q
-                    ? 'No followed wallet matches that search.'
-                    : "You aren't following anyone yet. Hit Follow on a forecaster to pin them here."
-                  : 'No wallet matches that search.'
-              }
-            />
-          </div>
-        </Panel>
-      )}
+      {view === 'mine' ? <MyWalletsSection /> : <OnchainTradersSection flow={flow} error={flowError} />}
     </div>
   )
 }
