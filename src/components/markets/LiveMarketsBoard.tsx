@@ -9,9 +9,9 @@ interface Row {
   id: string
   title: string
   category: string
-  venueId: 'waterx' | 'deepbook' | 'polymarket'
+  venueId: string
   kind: string
-  // Polymarket rows: read-only, with the WaterX mirror (if any) that paper trades go to.
+  // Compare-venue rows: read-only, with the WaterX mirror (if any) that paper trades go to.
   url?: string
   mirror?: { market: string; outcome: string; label: string; price: number } | null
   gapPp?: number | null
@@ -29,16 +29,20 @@ const KIND_LABEL: Record<string, string> = {
   binary: 'Binary'
 }
 
-function fromPolymarket(r: any): Row {
+// Read-only venues: prices to compare against WaterX. Paper trades never go to them.
+export const COMPARE_VENUES = ['polymarket', 'opinion', 'limitless']
+const isSui = (venueId: string) => venueId === 'waterx' || venueId === 'deepbook'
+
+function fromCompareVenue(venueId: string, r: any): Row {
   return {
     id: r.id,
     title: r.title,
     category: r.category,
-    venueId: 'polymarket',
+    venueId,
     kind: 'binary',
     lead: r.lead,
     price: r.price,
-    volume: null,
+    volume: r.volume ?? null,
     closesAt: r.closesAt,
     url: r.url,
     mirror: r.waterx,
@@ -119,39 +123,50 @@ export default function LiveMarketsBoard({
     }
   }, [])
 
-  // Polymarket has ~11k markets, so the server filters them; refetch once the search settles.
-  const withPolymarket = venues.includes('polymarket')
-  const [pm, setPm] = useState<{ rows: Row[]; total: number; mirrored: number } | null>(null)
-  const [pmError, setPmError] = useState<string | null>(null)
+  // Compare venues are filtered on the server (Polymarket alone has ~11k markets); refetch once the search
+  // settles. Each venue loads on its own so a slow one never holds up the rest.
+  const compareOn = COMPARE_VENUES.filter(v => venues.includes(v))
+  const compareKey = compareOn.join(',')
+  type Feed = { rows: Row[]; total: number; mirrored: number } | { error: string }
+  const [feeds, setFeeds] = useState<Record<string, Feed>>({})
   useEffect(() => {
-    if (!withPolymarket) {
-      setPm(null)
-      return
-    }
     let cancelled = false
+    setFeeds(prev => Object.fromEntries(Object.entries(prev).filter(([v]) => compareOn.includes(v))))
     const t = window.setTimeout(() => {
-      const params = new URLSearchParams({ q: search, category, limit: '300' })
-      fetch(`/api/polymarket/markets?${params}`)
-        .then(async r => {
-          const body = await r.json()
-          if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`)
-          if (!cancelled) {
-            setPm({ rows: body.rows.map(fromPolymarket), total: body.total, mirrored: body.mirrored })
-            setPmError(null)
-          }
-        })
-        .catch(err => !cancelled && setPmError(err.message))
+      for (const v of compareOn) {
+        const params = new URLSearchParams({ q: search, category, limit: '300' })
+        fetch(`/api/venues/${v}/markets?${params}`)
+          .then(async r => {
+            const body = await r.json()
+            if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`)
+            if (!cancelled) {
+              setFeeds(prev => ({
+                ...prev,
+                [v]: { rows: body.rows.map((x: any) => fromCompareVenue(v, x)), total: body.total, mirrored: body.mirrored }
+              }))
+            }
+          })
+          .catch(err => !cancelled && setFeeds(prev => ({ ...prev, [v]: { error: err.message } })))
+      }
     }, 350)
     return () => {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [withPolymarket, search, category])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareKey, search, category])
 
-  if (!rows || (withPolymarket && !pm && !pmError)) return <div className="h-64 rounded-xl pi-shimmer" />
+  if (!rows) return <div className="h-64 rounded-xl pi-shimmer" />
 
+  const withCompare = compareOn.length > 0
   const q = search.toLowerCase()
-  const all = [...rows.filter(r => venues.includes(r.venueId)), ...(pm?.rows ?? [])]
+  const all = [
+    ...rows.filter(r => venues.includes(r.venueId)),
+    ...compareOn.flatMap(v => {
+      const f = feeds[v]
+      return f && 'rows' in f ? f.rows : []
+    })
+  ]
   const shown = all
     .filter(r => (category === 'all' || r.category === category) && (!q || r.title.toLowerCase().includes(q) || r.lead.toLowerCase().includes(q)))
     .sort((a, b) =>
@@ -162,7 +177,7 @@ export default function LiveMarketsBoard({
           : (b.volume ?? -1) - (a.volume ?? -1)
     )
   const open = (r: Row) => {
-    if (r.venueId !== 'polymarket') return navigate(`/trade?market=${encodeURIComponent(r.id)}`)
+    if (isSui(r.venueId)) return navigate(`/trade?market=${encodeURIComponent(r.id)}`)
     if (r.mirror) return navigate(`/trade?market=${encodeURIComponent(r.mirror.market)}&outcome=${encodeURIComponent(r.mirror.outcome)}`)
     window.open(r.url, '_blank', 'noopener')
   }
@@ -177,24 +192,38 @@ export default function LiveMarketsBoard({
         WaterX {cents(r.mirror.price)}{' '}
         <span className={(r.gapPp ?? 0) >= 1 ? 'text-utility-warning-700 font-bold' : 'text-quaternary'}>· {r.gapPp?.toFixed(1)}pp</span>
       </span>
-    ) : r.venueId === 'polymarket' ? (
+    ) : !isSui(r.venueId) ? (
       <span className="text-quaternary">not on Sui</span>
     ) : (
       <span className="text-quaternary">—</span>
     )
-  const action = (r: Row) => (r.venueId !== 'polymarket' ? 'Trade →' : r.mirror ? 'Paper on WaterX →' : 'Open ↗')
+  const action = (r: Row) => (isSui(r.venueId) ? 'Trade →' : r.mirror ? 'Paper on WaterX →' : 'Open ↗')
+  const venueName = (v: string) => VENUE_MAP.get(v)?.name ?? v
   const sources = [
     venues.includes('waterx') && 'WaterX',
     venues.includes('deepbook') && 'DeepBook Predict',
-    withPolymarket && (pm ? `Polymarket (${pm.total.toLocaleString('en-US')} matching, ${pm.mirrored} also on WaterX)` : 'Polymarket')
+    ...compareOn.map(v => {
+      const f = feeds[v]
+      if (!f) return `${venueName(v)} (loading…)`
+      if ('error' in f) return `${venueName(v)} (unavailable)`
+      return `${venueName(v)} (${f.total.toLocaleString('en-US')} matching, ${f.mirrored} also on WaterX)`
+    })
   ].filter(Boolean)
+  const capped = compareOn.some(v => {
+    const f = feeds[v]
+    return f && 'rows' in f && f.total > f.rows.length
+  })
+  const failures = compareOn.flatMap(v => {
+    const f = feeds[v]
+    return f && 'error' in f ? [`${venueName(v)}: ${f.error}`] : []
+  })
 
   const footer = (
     <p className="text-[10px] text-quaternary font-mono">
       {shown.length} shown · {sources.join(' + ') || 'no venue selected'} · updated {fetchedAt ? formatTimeAgo(fetchedAt) : '—'}
-      {withPolymarket && pm && pm.total > pm.rows.length && ' · search to narrow Polymarket'}
+      {capped && ' · search to narrow the list'}
       {error && <span className="text-utility-warning-700"> · {error}</span>}
-      {pmError && <span className="text-utility-warning-700"> · Polymarket: {pmError}</span>}
+      {failures.length > 0 && <span className="text-utility-warning-700"> · {failures.join(' · ')}</span>}
     </p>
   )
 
@@ -219,7 +248,7 @@ export default function LiveMarketsBoard({
                   {r.price == null ? '—' : `${(r.price * 100).toFixed(1)}¢`}
                 </FlashValue>
               </div>
-              {r.venueId === 'polymarket' && <div className="text-[11px] font-mono text-tertiary">{compare(r)}</div>}
+              {!isSui(r.venueId) && <div className="text-[11px] font-mono text-tertiary">{compare(r)}</div>}
               <div className="flex items-center justify-between text-[11px] font-mono text-quaternary">
                 <span>{r.volume ? formatMoney(r.volume) : '—'} vol</span>
                 <span>closes {closesIn(r.closesAt)}</span>
@@ -243,7 +272,7 @@ export default function LiveMarketsBoard({
               <th className="py-xs px-sm">Venue</th>
               <th className="py-xs px-sm">Leading outcome</th>
               <th className="py-xs px-sm">Buy</th>
-              {withPolymarket && <th className="py-xs px-sm">Other venue</th>}
+              {withCompare && <th className="py-xs px-sm">Other venue</th>}
               <th className="py-xs px-sm">Volume</th>
               <th className="py-xs px-sm">Closes</th>
               <th className="py-xs px-sm text-right">Action</th>
@@ -262,7 +291,7 @@ export default function LiveMarketsBoard({
                 <td className="py-sm px-sm font-mono font-bold text-primary">
                   <FlashValue value={r.price}>{r.price == null ? '—' : `${(r.price * 100).toFixed(1)}¢`}</FlashValue>
                 </td>
-                {withPolymarket && <td className="py-sm px-sm font-mono text-xs">{compare(r)}</td>}
+                {withCompare && <td className="py-sm px-sm font-mono text-xs">{compare(r)}</td>}
                 <td className="py-sm px-sm font-mono text-tertiary">{r.volume ? formatMoney(r.volume) : '—'}</td>
                 <td className="py-sm px-sm font-mono text-tertiary whitespace-nowrap">{closesIn(r.closesAt)}</td>
                 <td className="py-sm px-sm text-right">

@@ -12,7 +12,7 @@ import { getPredictFlow } from '../lib/services/predictFlow.mjs'
 import { WHALE_MIN_USD, getWhaleTape } from '../lib/services/whaleFeed.mjs'
 import { getLiveDivergence } from '../lib/services/liveDivergence.mjs'
 import { getPolymarketSignals, getPolymarketTraders } from '../lib/services/copyTraders.mjs'
-import { getPolymarketBoard } from '../lib/services/polymarketMarkets.mjs'
+import { getVenueBoard } from '../lib/services/externalVenues.mjs'
 
 const router = Router()
 
@@ -79,11 +79,11 @@ router.get('/predict-flow', async (_req, res) => {
   }
 })
 
-// Polymarket markets (read-only), each with its WaterX mirror and the price gap.
-router.get('/polymarket/markets', async (req, res) => {
+// Read-only markets from a compare venue (Polymarket, Opinion, Limitless), each with its WaterX mirror and gap.
+router.get('/venues/:venue/markets', async (req, res) => {
   try {
     res.json(
-      await getPolymarketBoard({
+      await getVenueBoard(req.params.venue, {
         q: String(req.query.q ?? '').slice(0, 100),
         category: String(req.query.category ?? 'all'),
         limit: Number(req.query.limit) || 300
@@ -91,8 +91,8 @@ router.get('/polymarket/markets', async (req, res) => {
     )
   } catch (err) {
     if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
-    console.error('[polymarket/markets]', err)
-    res.status(500).json({ error: 'Unexpected error loading Polymarket markets.' })
+    console.error('[venues/markets]', err)
+    res.status(500).json({ error: 'Unexpected error loading venue markets.' })
   }
 })
 
