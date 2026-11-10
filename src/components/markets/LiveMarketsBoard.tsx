@@ -9,8 +9,12 @@ interface Row {
   id: string
   title: string
   category: string
-  venueId: 'waterx' | 'deepbook'
+  venueId: 'waterx' | 'deepbook' | 'polymarket'
   kind: string
+  // Polymarket rows: read-only, with the WaterX mirror (if any) that paper trades go to.
+  url?: string
+  mirror?: { market: string; outcome: string; label: string; price: number } | null
+  gapPp?: number | null
   lead: string
   price: number | null
   volume: number | null
@@ -21,7 +25,25 @@ const KIND_LABEL: Record<string, string> = {
   event: 'Event',
   'sport-match': 'Match',
   'crypto-updown': 'Up / down',
-  window: 'BTC window'
+  window: 'BTC window',
+  binary: 'Binary'
+}
+
+function fromPolymarket(r: any): Row {
+  return {
+    id: r.id,
+    title: r.title,
+    category: r.category,
+    venueId: 'polymarket',
+    kind: 'binary',
+    lead: r.lead,
+    price: r.price,
+    volume: null,
+    closesAt: r.closesAt,
+    url: r.url,
+    mirror: r.waterx,
+    gapPp: r.gapPp
+  }
 }
 
 function toRows(live: any): Row[] {
@@ -57,17 +79,20 @@ const closesIn = (iso: string | null) => {
   return new Date(iso).toISOString().slice(0, 10)
 }
 
-// Every market tradable on the two Sui venues, refreshed live.
+// Live markets from the chosen venues. Sui venues trade on paper directly; Polymarket is read-only and
+// paper trades go to the same market on WaterX when it lists one.
 export default function LiveMarketsBoard({
   category,
   search,
   sort,
-  view
+  view,
+  venues
 }: {
   category: string
   search: string
   sort: string
   view: string
+  venues: string[]
 }) {
   const navigate = useNavigate()
   const [rows, setRows] = useState<Row[] | null>(null)
@@ -94,26 +119,82 @@ export default function LiveMarketsBoard({
     }
   }, [])
 
-  if (!rows) return <div className="h-64 rounded-xl pi-shimmer" />
+  // Polymarket has ~11k markets, so the server filters them; refetch once the search settles.
+  const withPolymarket = venues.includes('polymarket')
+  const [pm, setPm] = useState<{ rows: Row[]; total: number; mirrored: number } | null>(null)
+  const [pmError, setPmError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!withPolymarket) {
+      setPm(null)
+      return
+    }
+    let cancelled = false
+    const t = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: search, category, limit: '300' })
+      fetch(`/api/polymarket/markets?${params}`)
+        .then(async r => {
+          const body = await r.json()
+          if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`)
+          if (!cancelled) {
+            setPm({ rows: body.rows.map(fromPolymarket), total: body.total, mirrored: body.mirrored })
+            setPmError(null)
+          }
+        })
+        .catch(err => !cancelled && setPmError(err.message))
+    }, 350)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [withPolymarket, search, category])
+
+  if (!rows || (withPolymarket && !pm && !pmError)) return <div className="h-64 rounded-xl pi-shimmer" />
 
   const q = search.toLowerCase()
-  const shown = rows
+  const all = [...rows.filter(r => venues.includes(r.venueId)), ...(pm?.rows ?? [])]
+  const shown = all
     .filter(r => (category === 'all' || r.category === category) && (!q || r.title.toLowerCase().includes(q) || r.lead.toLowerCase().includes(q)))
     .sort((a, b) =>
       sort === 'closing'
         ? (a.closesAt ? Date.parse(a.closesAt) : Infinity) - (b.closesAt ? Date.parse(b.closesAt) : Infinity)
-        : (b.volume ?? -1) - (a.volume ?? -1)
+        : sort === 'gap'
+          ? (b.gapPp ?? -1) - (a.gapPp ?? -1)
+          : (b.volume ?? -1) - (a.volume ?? -1)
     )
-  const open = (r: Row) => navigate(`/trade?market=${encodeURIComponent(r.id)}`)
+  const open = (r: Row) => {
+    if (r.venueId !== 'polymarket') return navigate(`/trade?market=${encodeURIComponent(r.id)}`)
+    if (r.mirror) return navigate(`/trade?market=${encodeURIComponent(r.mirror.market)}&outcome=${encodeURIComponent(r.mirror.outcome)}`)
+    window.open(r.url, '_blank', 'noopener')
+  }
   const venue = (id: string) => {
     const v = VENUE_MAP.get(id)
     return <VenuePill name={id === 'deepbook' ? 'DeepBook Predict' : v?.name ?? id} color={v?.color ?? '#888'} />
   }
+  const cents = (p: number | null | undefined) => (p == null ? '—' : `${(p * 100).toFixed(1)}¢`)
+  const compare = (r: Row) =>
+    r.mirror ? (
+      <span className="whitespace-nowrap">
+        WaterX {cents(r.mirror.price)}{' '}
+        <span className={(r.gapPp ?? 0) >= 1 ? 'text-utility-warning-700 font-bold' : 'text-quaternary'}>· {r.gapPp?.toFixed(1)}pp</span>
+      </span>
+    ) : r.venueId === 'polymarket' ? (
+      <span className="text-quaternary">not on Sui</span>
+    ) : (
+      <span className="text-quaternary">—</span>
+    )
+  const action = (r: Row) => (r.venueId !== 'polymarket' ? 'Trade →' : r.mirror ? 'Paper on WaterX →' : 'Open ↗')
+  const sources = [
+    venues.includes('waterx') && 'WaterX',
+    venues.includes('deepbook') && 'DeepBook Predict',
+    withPolymarket && (pm ? `Polymarket (${pm.total.toLocaleString('en-US')} matching, ${pm.mirrored} also on WaterX)` : 'Polymarket')
+  ].filter(Boolean)
 
   const footer = (
     <p className="text-[10px] text-quaternary font-mono">
-      {shown.length} of {rows.length} live markets · WaterX + DeepBook Predict · updated {fetchedAt ? formatTimeAgo(fetchedAt) : '—'}
+      {shown.length} shown · {sources.join(' + ') || 'no venue selected'} · updated {fetchedAt ? formatTimeAgo(fetchedAt) : '—'}
+      {withPolymarket && pm && pm.total > pm.rows.length && ' · search to narrow Polymarket'}
       {error && <span className="text-utility-warning-700"> · {error}</span>}
+      {pmError && <span className="text-utility-warning-700"> · Polymarket: {pmError}</span>}
     </p>
   )
 
@@ -138,6 +219,7 @@ export default function LiveMarketsBoard({
                   {r.price == null ? '—' : `${(r.price * 100).toFixed(1)}¢`}
                 </FlashValue>
               </div>
+              {r.venueId === 'polymarket' && <div className="text-[11px] font-mono text-tertiary">{compare(r)}</div>}
               <div className="flex items-center justify-between text-[11px] font-mono text-quaternary">
                 <span>{r.volume ? formatMoney(r.volume) : '—'} vol</span>
                 <span>closes {closesIn(r.closesAt)}</span>
@@ -161,6 +243,7 @@ export default function LiveMarketsBoard({
               <th className="py-xs px-sm">Venue</th>
               <th className="py-xs px-sm">Leading outcome</th>
               <th className="py-xs px-sm">Buy</th>
+              {withPolymarket && <th className="py-xs px-sm">Other venue</th>}
               <th className="py-xs px-sm">Volume</th>
               <th className="py-xs px-sm">Closes</th>
               <th className="py-xs px-sm text-right">Action</th>
@@ -179,16 +262,19 @@ export default function LiveMarketsBoard({
                 <td className="py-sm px-sm font-mono font-bold text-primary">
                   <FlashValue value={r.price}>{r.price == null ? '—' : `${(r.price * 100).toFixed(1)}¢`}</FlashValue>
                 </td>
+                {withPolymarket && <td className="py-sm px-sm font-mono text-xs">{compare(r)}</td>}
                 <td className="py-sm px-sm font-mono text-tertiary">{r.volume ? formatMoney(r.volume) : '—'}</td>
                 <td className="py-sm px-sm font-mono text-tertiary whitespace-nowrap">{closesIn(r.closesAt)}</td>
                 <td className="py-sm px-sm text-right">
-                  <span className="px-sm py-xxs bg-tertiary rounded text-xs font-mono font-bold">Trade →</span>
+                  <span className="px-sm py-xxs bg-tertiary rounded text-xs font-mono font-bold whitespace-nowrap">{action(r)}</span>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {shown.length === 0 && <p className="p-xl text-center text-xs text-tertiary">No live market matches these filters.</p>}
+        {shown.length === 0 && (
+          <p className="p-xl text-center text-xs text-tertiary">{venues.length === 0 ? 'Pick at least one venue.' : 'No live market matches these filters.'}</p>
+        )}
         <div className="px-sm py-xs border-t border-secondary">{footer}</div>
       </div>
     </Panel>

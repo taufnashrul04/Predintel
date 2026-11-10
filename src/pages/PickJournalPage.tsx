@@ -7,6 +7,7 @@ import CopySignals from '../components/journal/CopySignals'
 import { VENUE_MAP } from '../lib/config/venues'
 import { formatTimeAgo } from '../lib/formatters'
 import { parseSuiAddress } from '../lib/myWallets'
+import { isPolygonAddress, polymarketProfile } from '../lib/polymarketCopy'
 import { PaperTrade, usePaperMarks, useJournal } from '../lib/paperJournal'
 import { useApp } from '../context/AppContext'
 
@@ -72,8 +73,9 @@ function JournalWorkspace() {
 
   const addTracked = (e: React.FormEvent) => {
     e.preventDefault()
-    const wallet = parseSuiAddress(walletInput)
-    if (!wallet) return setTrackError('Enter a valid Sui address.')
+    const raw = walletInput.trim()
+    const wallet = isPolygonAddress(raw) ? raw.toLowerCase() : parseSuiAddress(raw)
+    if (!wallet) return setTrackError('Enter a Sui address or a Polymarket (Polygon) wallet.')
     if (journal.tracked.some(w => w.address === wallet)) return setTrackError('Already tracked.')
     track(wallet, labelInput)
     setWalletInput('')
@@ -169,7 +171,7 @@ function JournalWorkspace() {
           </Panel>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-md">
-            <Panel title="Copy trading" badge="DEEPBOOK PREDICT · ON-CHAIN" badgeVariant="success">
+            <Panel title="Copy trading" badge="DEEPBOOK PREDICT · POLYMARKET → WATERX" badgeVariant="success">
               <div className="space-y-md">
                 <form onSubmit={addTracked} className="flex flex-col sm:flex-row gap-xs">
                   <input
@@ -178,7 +180,7 @@ function JournalWorkspace() {
                       setWalletInput(e.target.value)
                       setTrackError(null)
                     }}
-                    placeholder="Wallet address to track 0x…"
+                    placeholder="Sui or Polymarket wallet 0x…"
                     aria-label="Wallet address to track"
                     className="flex-1 min-w-0 bg-secondary border border-secondary rounded-md px-sm py-xs text-xs font-mono text-primary placeholder:text-placeholder focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
                   />
@@ -200,7 +202,10 @@ function JournalWorkspace() {
                   <div className="flex flex-wrap gap-xs">
                     {journal.tracked.map(w => (
                       <span key={w.address} className="inline-flex items-center gap-xs rounded-lg border border-secondary bg-secondary px-sm py-xxs text-xs">
-                        <button onClick={() => navigate(`/wallets/${w.address}`)} className="text-primary hover:underline">
+                        <button
+                          onClick={() => (isPolygonAddress(w.address) ? window.open(polymarketProfile(w.address), '_blank', 'noopener') : navigate(`/wallets/${w.address}`))}
+                          className="text-primary hover:underline"
+                        >
                           {w.label}
                         </button>
                         <button onClick={() => untrack(w.address)} aria-label={`Stop tracking ${w.label}`} className="text-quaternary hover:text-utility-error-700">
@@ -225,8 +230,8 @@ function JournalWorkspace() {
 
                 <CopySignals />
                 <p className="text-[10px] text-quaternary">
-                  Copies take the same BTC window and direction at its reference strike, priced live. Only DeepBook Predict trades are visible
-                  on-chain per wallet.
+                  DeepBook Predict copies take the same BTC window and direction. Polymarket copies land on the same WaterX market (sport
+                  winners, crypto up/down rounds, YES on binary questions). Every copy is a paper trade priced live on Sui.
                 </p>
               </div>
             </Panel>

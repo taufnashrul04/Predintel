@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Trash2, Plus, Radar } from 'lucide-react'
+import { Search, Trash2, Plus, Radar, ExternalLink } from 'lucide-react'
 import { useCurrentAccount } from '@mysten/dapp-kit-react'
 import { ConnectButton } from '@mysten/dapp-kit-react/ui'
 import { Panel, TruncatedAddress } from '../components/SharedUI'
@@ -10,9 +10,11 @@ import { formatMoney, formatTimeAgo } from '../lib/formatters'
 import { MyWallet, parseSuiAddress, useMyWallets } from '../lib/myWallets'
 import { PredictFlow, shortId, usdFmt, usePredictFlow } from '../lib/predictFlow'
 import { useJournal } from '../lib/paperJournal'
+import { isPolygonAddress, polymarketProfile, usePolymarketTraders } from '../lib/polymarketCopy'
 import { useApp } from '../context/AppContext'
 
 type View = 'mine' | 'onchain'
+type Venue = 'deepbook' | 'polymarket'
 
 const th = 'py-xs px-sm'
 const td = 'py-sm px-sm'
@@ -70,7 +72,7 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
   const isCopied = (owner: string) => journal.tracked.some(w => w.address === owner)
 
   return (
-    <Panel title="On-chain traders · DeepBook Predict" badge="SUI MAINNET" badgeVariant="success" noPadding>
+    <Panel title="DeepBook Predict traders" badge="SUI MAINNET" badgeVariant="success" noPadding>
       <div className="overflow-x-auto">
         {error && !flow && <p className="p-xl text-center text-xs text-utility-error-700">Couldn't load traders: {error}</p>}
         {!flow && !error && <div className="m-md h-32 rounded pi-shimmer" />}
@@ -148,6 +150,81 @@ function OnchainTradersSection({ flow, error }: { flow: PredictFlow | null; erro
         {flow && (
           <p className="px-sm py-xs text-[10px] text-quaternary border-t border-secondary">
             {flow.totals.fills} fills since {flow.window.from ? formatTimeAgo(flow.window.from) : '—'} · {flow.source}
+          </p>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+function PolymarketTradersSection() {
+  const { traders, minUsd, error } = usePolymarketTraders()
+  const { showToast } = useApp()
+  const { journal, track } = useJournal()
+  const isCopied = (w: string) => journal.tracked.some(t => t.address.toLowerCase() === w.toLowerCase())
+
+  return (
+    <Panel title="Polymarket traders · copied on WaterX" badge="LIVE" badgeVariant="success" noPadding>
+      <p className="px-sm py-xs text-[11px] text-tertiary border-b border-secondary">
+        WaterX mirrors Polymarket markets but doesn't publish its own traders, so you copy the Polymarket wallet and each buy becomes a
+        paper trade on the same WaterX market on Sui. "On WaterX" counts the buys that have a matching WaterX market.
+      </p>
+      <div className="overflow-x-auto">
+        {error && !traders && <p className="p-xl text-center text-xs text-utility-error-700">Couldn't load traders: {error}</p>}
+        {!traders && !error && <div className="m-md h-32 rounded pi-shimmer" />}
+        {traders && (
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="text-quaternary border-b border-secondary uppercase text-[11px] font-semibold bg-secondary">
+                <th className={th}>Trader</th>
+                <th className={th}>Volume</th>
+                <th className={th}>Trades</th>
+                <th className={th}>On WaterX</th>
+                <th className={th}>Last market</th>
+                <th className={th}>Last trade</th>
+                <th className={`${th} text-right`}>Copy</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-secondary">
+              {traders.map(t => (
+                <tr key={t.wallet} className="hover:bg-secondary-hover transition-colors">
+                  <td className={`${td} text-primary`}>
+                    <a href={polymarketProfile(t.wallet)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-xxs font-sans font-semibold hover:underline">
+                      {t.trader ?? shortId(t.wallet)} <ExternalLink className="size-3 shrink-0 text-quaternary" />
+                    </a>
+                    <div className="text-[10px] text-quaternary">{shortId(t.wallet)} · Polygon</div>
+                  </td>
+                  <td className={`${td} font-bold text-primary`}>{formatMoney(t.volume)}</td>
+                  <td className={td}>{t.trades}</td>
+                  <td className={`${td} ${t.copyable > 0 ? 'text-utility-success-700 font-bold' : 'text-quaternary'}`}>
+                    {t.copyable > 0 ? `${t.copyable} buy${t.copyable > 1 ? 's' : ''}` : 'none yet'}
+                  </td>
+                  <td className={`${td} font-sans text-tertiary`}>
+                    <div className="max-w-[260px] truncate">{t.lastMarket}</div>
+                  </td>
+                  <td className={`${td} text-quaternary`}>{formatTimeAgo(t.lastAt)}</td>
+                  <td className={`${td} text-right whitespace-nowrap`}>
+                    <button
+                      onClick={() => {
+                        if (isCopied(t.wallet)) return
+                        track(t.wallet, t.trader ?? `Polymarket ${shortId(t.wallet)}`)
+                        showToast('Added to your copy list. Its buys show up as copy signals.')
+                      }}
+                      className={`px-sm py-xxs rounded font-sans ${
+                        isCopied(t.wallet) ? 'bg-utility-success-50 text-utility-success-700' : 'bg-brand-solid text-primary-on-brand font-bold'
+                      }`}
+                    >
+                      {isCopied(t.wallet) ? 'Copying' : 'Copy'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {traders && (
+          <p className="px-sm py-xs text-[10px] text-quaternary border-t border-secondary">
+            Polymarket takers with trades of {formatMoney(minUsd)}+ in the latest 500 large trades · Polymarket Data API
           </p>
         )}
       </div>
@@ -277,10 +354,12 @@ function WalletsWorkspace() {
   const navigate = useNavigate()
   const { wallets: mine } = useMyWallets()
   const { flow, error: flowError } = usePredictFlow()
-  const lookupAddress = parseSuiAddress(search)
+  const lookupAddress = isPolygonAddress(search.trim()) ? null : parseSuiAddress(search)
+  const venue: Venue = searchParams.get('venue') === 'polymarket' ? 'polymarket' : 'deepbook'
+  const { traders: pmTraders } = usePolymarketTraders()
 
   const tabs: { id: View; label: string; count: number }[] = [
-    { id: 'onchain', label: 'On-chain traders', count: flow?.traders.length ?? 0 },
+    { id: 'onchain', label: 'Traders', count: (flow?.traders.length ?? 0) + (pmTraders?.length ?? 0) },
     { id: 'mine', label: 'My wallets', count: mine.length }
   ]
 
@@ -325,7 +404,32 @@ function WalletsWorkspace() {
         )}
       </div>
 
-      {view === 'mine' ? <MyWalletsSection /> : <OnchainTradersSection flow={flow} error={flowError} />}
+      {view === 'mine' ? (
+        <MyWalletsSection />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-xs" role="tablist" aria-label="Venue">
+            {([
+              { id: 'deepbook', label: 'DeepBook Predict', note: 'Sui', count: flow?.traders.length },
+              { id: 'polymarket', label: 'Polymarket', note: 'copied on WaterX', count: pmTraders?.length }
+            ] as const).map(v => (
+              <button
+                key={v.id}
+                role="tab"
+                aria-selected={venue === v.id}
+                onClick={() => setSearchParams(v.id === 'deepbook' ? {} : { venue: v.id }, { replace: true })}
+                className={`px-md py-xs rounded-lg border text-xs font-semibold transition-colors ${
+                  venue === v.id ? 'border-brand bg-utility-brand-50 text-utility-brand-700' : 'border-secondary bg-primary text-tertiary hover:text-primary'
+                }`}
+              >
+                {v.label} {v.count != null && <span className="font-mono">({v.count})</span>}
+                <span className="ml-xs text-[10px] font-normal text-quaternary">{v.note}</span>
+              </button>
+            ))}
+          </div>
+          {venue === 'polymarket' ? <PolymarketTradersSection /> : <OnchainTradersSection flow={flow} error={flowError} />}
+        </>
+      )}
     </div>
   )
 }

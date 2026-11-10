@@ -1,108 +1,50 @@
-// Live cross-venue divergence: WaterX binary markets matched to the same Polymarket market.
-// WaterX mirrors Polymarket questions verbatim, so markets pair up by normalized question text.
-// Polymarket prices come from its public CLOB API (sampling-markets: active, order-book markets).
-import { LiveDataError } from './suiLive.mjs'
-import { getWaterxFeedItems, listWaterxEvents } from './livePredict.mjs'
-
-const CLOB_SAMPLING = 'https://clob.polymarket.com/sampling-markets'
-const PM_TTL_MS = 60_000
-const MAX_PAGES = 40
-const TIMEOUT_MS = 15_000
-
-const norm = s =>
-  String(s ?? '')
-    .toLowerCase()
-    .replace(/[’']/g, "'")
-    .replace(/[^a-z0-9$.%' ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-let pmCache = null
-let pmInflight = null
-
-// question → { slug, yes } for every active Polymarket market (about 12k, paged by 1,000).
-function polymarketByQuestion() {
-  if (pmCache && Date.now() - pmCache.at < PM_TTL_MS) return Promise.resolve(pmCache.map)
-  pmInflight ??= (async () => {
-    const map = new Map()
-    let cursor = ''
-    for (let page = 0; page < MAX_PAGES; page++) {
-      let body
-      try {
-        const res = await fetch(`${CLOB_SAMPLING}?next_cursor=${encodeURIComponent(cursor)}`, { signal: AbortSignal.timeout(TIMEOUT_MS) })
-        body = await res.json()
-        if (!res.ok || !Array.isArray(body.data)) throw new Error(body.error || `HTTP ${res.status}`)
-      } catch (err) {
-        throw new LiveDataError(`Polymarket markets unavailable: ${err.message}`)
-      }
-      for (const m of body.data) {
-        if (!m.active || m.closed || !m.accepting_orders) continue
-        const yes = m.tokens?.find(t => /^yes$/i.test(t.outcome))
-        if (yes?.price == null) continue
-        map.set(norm(m.question), { slug: m.market_slug, yes: yes.price })
-      }
-      if (!body.next_cursor || body.next_cursor === 'LTE=' || body.data.length === 0) break
-      cursor = body.next_cursor
-    }
-    pmCache = { at: Date.now(), map }
-    return map
-  })().finally(() => {
-    pmInflight = null
-  })
-  return pmInflight
-}
+// Live cross-venue divergence: Polymarket markets matched to the same market on WaterX.
+// Matching covers binary questions (verbatim), sport match winners (shared event slug) and crypto
+// up/down rounds (shared start time). Polymarket prices come from its public CLOB API.
+import { allPolymarketMarkets, categoryOf } from './polymarketMarkets.mjs'
+import { buildWaterxIndex, mirrorOf } from './copyTraders.mjs'
 
 const pp = n => Math.round(n * 1000) / 10
+const KIND = slug => (/-updown-/.test(slug) ? 'updown' : null)
 
 export async function getLiveDivergence({ minGapPp = 0.5 } = {}) {
-  const [pm, items, events] = await Promise.all([
-    polymarketByQuestion(),
-    getWaterxFeedItems(),
-    listWaterxEvents().catch(() => [])
-  ])
-  // WaterX market → its event slug, so a row can open the in-app Trade tab on that event.
-  const eventSlugById = new Map(events.map(e => [e.eventId, e.id]))
+  const [markets, index] = await Promise.all([allPolymarketMarkets(), buildWaterxIndex()])
 
   let matched = 0
   const rows = []
-  for (const item of items) {
-    const m = item.market
-    const r = item.round
-    if (m?.type !== 'prediction-binary' || !m.display?.question || r?.phase !== 'open') continue
-    const up = r.sides?.find(s => s.key === 'up')
-    const down = r.sides?.find(s => s.key === 'down')
-    if (up?.oddsCents == null || down?.oddsCents == null || up.probabilityCents == null) continue
-    const poly = pm.get(norm(m.display.question))
-    if (!poly) continue
+  for (const m of markets) {
+    // Binaries pair on YES; matches and up/down rounds on the first listed outcome.
+    const lead = m.tokens.find(t => /^yes$/i.test(t.outcome)) ?? m.tokens[0]
+    const wx = mirrorOf({ slug: m.slug, eventSlug: m.slug, title: m.question, outcome: lead.outcome }, index)
+    if (!wx.market || wx.price == null || wx.ask == null || wx.bid == null) continue
     matched++
 
-    const wxMid = up.probabilityCents / 100
-    const wxAsk = up.oddsCents / 100
-    const wxBid = Math.max(0, 1 - down.oddsCents / 100)
-    const gap = wxMid - poly.yes
+    const poly = lead.price
+    const gap = wx.price - poly
     if (Math.abs(gap) * 100 < minGapPp) continue
 
     // Executable only when Polymarket sits outside WaterX's own bid/ask.
-    const edge = poly.yes > wxAsk ? poly.yes - wxAsk : poly.yes < wxBid ? wxBid - poly.yes : 0
-    const lowIsWaterx = wxMid < poly.yes
+    const edge = poly > wx.ask ? poly - wx.ask : poly < wx.bid ? wx.bid - poly : 0
+    const lowIsWaterx = wx.price < poly
     const waterx = {
       venueId: 'waterx',
       name: 'WaterX',
-      price: wxMid,
-      ask: wxAsk,
-      bid: wxBid,
-      url: `https://waterx.app/en/predict/market/prediction/${m.slug}`,
-      tradeId: eventSlugById.get(m.eventId) ?? null,
-      outcomeId: m.display.option?.code ?? null
+      price: wx.price,
+      ask: wx.ask,
+      bid: wx.bid,
+      url: 'https://waterx.app/en/predict',
+      tradeId: wx.market,
+      outcomeId: wx.outcome
     }
-    const polymarket = { venueId: 'polymarket', name: 'Polymarket', price: poly.yes, url: `https://polymarket.com/market/${poly.slug}` }
+    const polymarket = { venueId: 'polymarket', name: 'Polymarket', price: poly, url: `https://polymarket.com/market/${m.slug}` }
+    const binary = /^yes$/i.test(lead.outcome)
     rows.push({
-      id: m.id,
-      question: m.display.question,
-      category: m.category,
-      volumeUsd: Math.round(r.volumeUsd ?? 0),
-      closesAt: new Date(r.endsAt * 1000).toISOString(),
-      consensus: (wxMid + poly.yes) / 2,
+      id: m.slug,
+      question: binary ? m.question : `${m.question} · ${KIND(m.slug) ? lead.outcome : wx.label}`,
+      category: KIND(m.slug) ? 'crypto' : categoryOf(m.tags),
+      volumeUsd: wx.volumeUsd ?? 0,
+      closesAt: new Date((wx.closesAt ?? 0) * 1000).toISOString(),
+      consensus: (wx.price + poly) / 2,
       gapPp: pp(Math.abs(gap)),
       edgePp: pp(edge),
       low: lowIsWaterx ? waterx : polymarket,

@@ -11,6 +11,8 @@ import { loadLiveMarket } from './trade.mjs'
 import { getPredictFlow } from '../lib/services/predictFlow.mjs'
 import { WHALE_MIN_USD, getWhaleTape } from '../lib/services/whaleFeed.mjs'
 import { getLiveDivergence } from '../lib/services/liveDivergence.mjs'
+import { getPolymarketSignals, getPolymarketTraders } from '../lib/services/copyTraders.mjs'
+import { getPolymarketBoard } from '../lib/services/polymarketMarkets.mjs'
 
 const router = Router()
 
@@ -74,6 +76,45 @@ router.get('/predict-flow', async (_req, res) => {
     if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
     console.error('[predict-flow]', err)
     res.status(500).json({ error: 'Unexpected error loading DeepBook Predict flow.' })
+  }
+})
+
+// Polymarket markets (read-only), each with its WaterX mirror and the price gap.
+router.get('/polymarket/markets', async (req, res) => {
+  try {
+    res.json(
+      await getPolymarketBoard({
+        q: String(req.query.q ?? '').slice(0, 100),
+        category: String(req.query.category ?? 'all'),
+        limit: Number(req.query.limit) || 300
+      })
+    )
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[polymarket/markets]', err)
+    res.status(500).json({ error: 'Unexpected error loading Polymarket markets.' })
+  }
+})
+
+// Polymarket traders worth copying, and recent buys by the wallets a journal copies (mirrored on WaterX).
+router.get('/copy/polymarket/traders', async (_req, res) => {
+  try {
+    res.json(await getPolymarketTraders())
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[copy/traders]', err)
+    res.status(500).json({ error: 'Unexpected error loading Polymarket traders.' })
+  }
+})
+
+router.get('/copy/polymarket/signals', async (req, res) => {
+  const wallets = String(req.query.wallets ?? '').split(',').filter(Boolean)
+  try {
+    res.json(await getPolymarketSignals(wallets))
+  } catch (err) {
+    if (err instanceof LiveDataError) return res.status(err.status).json({ error: err.message })
+    console.error('[copy/signals]', err)
+    res.status(500).json({ error: 'Unexpected error loading copy signals.' })
   }
 })
 
